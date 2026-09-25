@@ -1,0 +1,40 @@
+{#- Only rendered when Redis runs as a container on the deployment host. -#}
+# Redis for {{ PROJECT_NAME }} ({{ ENV }})
+
+# ---- Memory ----
+# maxmemory should stay below the container's mem_limit ({{ REDIS_MEM_LIMIT }}) so
+# Redis evicts before Docker OOM-kills it.
+#
+# volatile-lru, not allkeys-lru: this one instance is the cache, the rate
+# limiter's counters, the Celery result backend AND the Celery broker. Cache
+# entries, counters and results all carry a TTL; a queue does not. Under
+# allkeys-lru a queue nobody has touched for a while is the least-recently-used
+# key in the instance, and it goes — every job in it, silently (reproduced: one
+# queued verification email, 3 MB of cache writes, the queue gone). volatile-lru
+# only ever evicts keys that were going to expire anyway; if nothing evictable is
+# left, a write fails loudly instead of a job vanishing.
+maxmemory {{ REDIS_MAXMEMORY }}
+maxmemory-policy volatile-lru
+
+# ---- Persistence ----
+# The broker's queue survives a restart with this on. Turn it off only if this
+# instance is a pure cache.
+appendonly yes
+appendfsync everysec
+save 900 1
+save 300 10
+save 60 10000
+
+# ---- Network ----
+# Reachable only on the compose network — the container publishes no port.
+bind 0.0.0.0
+port 6379
+protected-mode no
+
+loglevel notice
+
+# The password lives in a separate file so it never appears in `ps`. That file is
+# world-readable by design: it is bind-mounted in, and this process runs as uid
+# 999 — a 0600 file owned by the deploy user would be unreadable and Redis would
+# exit here. It is protected by REMOTE_DIR's ownership, not by its own mode.
+include /usr/local/etc/redis/redis-password.conf

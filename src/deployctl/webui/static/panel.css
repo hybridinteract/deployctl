@@ -1,0 +1,372 @@
+:root {
+  --bg:#f4f5f7; --panel:#fff; --border:#e2e5ea; --border2:#d3d8e0;
+  --text:#1c2330; --muted:#6b7480; --accent:#3a5bd9; --accent-d:#2f49ad;
+  --danger:#c0392b; --ok:#1f9254; --warn:#b26a00;
+  --term-bg:#0b1020; --term-fg:#cfe3ff; --term-dim:#7f93b8;
+  --r:7px; --gap:.55rem;
+  /* Output pane width. Set by dragging the gutter and remembered per browser;
+     --term-h is only the fallback height when the window is too narrow to
+     split side by side. */
+  --term-w:38%; --term-h:40%;
+}
+* { box-sizing:border-box; }
+html,body { height:100%; }
+body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       font-size:13px; color:var(--text); background:var(--bg);
+       display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+a { color:var(--accent); }
+code,.mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+
+.topbar { flex:0 0 auto; display:flex; align-items:center; gap:1rem; padding:.5rem .85rem;
+          background:var(--panel); border-bottom:1px solid var(--border); }
+.brand { font-weight:700; letter-spacing:-.02em; }
+.brand .sub { color:var(--muted); font-weight:400; margin-left:.4rem; font-size:.82rem; }
+.chips { display:flex; gap:1rem; flex-wrap:wrap; }
+.chip { display:flex; flex-direction:column; line-height:1.25; }
+.chip .k { font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+.chip .v { font-weight:600; }
+.envpick { padding:.3rem .5rem; border:1px solid var(--border2); border-radius:var(--r);
+           font-weight:600; background:var(--panel); }
+.health { display:flex; align-items:center; gap:.4rem; color:var(--muted); }
+.dot { width:9px; height:9px; border-radius:50%; background:var(--border2); }
+.dot.ok { background:var(--ok); } .dot.bad { background:var(--danger); }
+
+/* Side-by-side: settings on the left, streamed output on the right. Deploy
+   output is many short lines, so a tall narrow column suits it better than a
+   wide short one — and it stays readable while you scroll the form. */
+.shell { flex:1 1 auto; display:flex; flex-direction:row; min-height:0; }
+.left { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; min-width:0; }
+.tabs { flex:0 0 auto; display:flex; gap:.15rem; padding:.45rem .85rem 0;
+        background:var(--panel); border-bottom:1px solid var(--border); }
+.tab { padding:.45rem .9rem; border:1px solid transparent; border-bottom:none; cursor:pointer;
+       border-radius:var(--r) var(--r) 0 0; color:var(--muted); font-weight:600; }
+.tab.active { background:var(--bg); border-color:var(--border); color:var(--text); }
+.panes { flex:1 1 auto; overflow:auto; padding: .8rem .85rem 1.2rem; min-height:0; }
+.pane { display:none; max-width:1080px; }
+.pane.active { display:block; }
+
+.card { background:var(--panel); border:1px solid var(--border); border-radius:var(--r);
+        margin-bottom:var(--gap); }
+.card > summary { list-style:none; cursor:pointer; padding:.6rem .8rem; display:flex; gap:.6rem;
+                  align-items:baseline; }
+.card > summary::-webkit-details-marker { display:none; }
+.card .arrow { color:var(--muted); font-size:.7rem; transition:transform .12s; }
+.card[open] .arrow { transform:rotate(90deg); }
+.card .tw { font-weight:700; }
+.card .sdesc { color:var(--muted); font-size:.78rem; }
+.card-body { padding:.2rem .9rem .8rem; border-top:1px solid var(--border); }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:.6rem .9rem; }
+.field { display:flex; flex-direction:column; gap:.25rem; }
+.field.full { grid-column:1 / -1; }
+.field label { font-size:.75rem; font-weight:600; color:var(--muted); }
+.field input,.field select { padding:.42rem .5rem; border:1px solid var(--border2);
+                             border-radius:var(--r); font-size:.85rem; background:#fff; }
+.field input:focus,.field select:focus { outline:2px solid #b9c6f5; border-color:var(--accent); }
+.req { color:var(--danger); }
+.hint { color:var(--muted); font-size:.72rem; }
+.hint.err { color:var(--danger); }
+.saved-badge { background:#e7f4ec; color:var(--ok); border-radius:9px; padding:0 .45rem;
+               font-size:.68rem; margin-left:.35rem; }
+.footer { display:flex; gap:.6rem; align-items:center; margin-top:.4rem; }
+
+/* "Where do I get this?" — the (i) beside a label, and the modal it opens.
+   Deliberately small and quiet: it sits on a handful of fields, and a loud
+   badge on every other label would read as a warning rather than an offer. */
+.infobtn { width:14px; height:14px; padding:0; margin-left:.3rem; vertical-align:middle;
+           border:1px solid var(--border2); border-radius:50%; background:var(--panel);
+           color:var(--muted); font:600 9px/1 ui-monospace,Menlo,monospace; cursor:pointer; }
+.infobtn:hover { border-color:var(--accent); color:var(--accent); }
+.infobtn:focus-visible { outline:2px solid #b9c6f5; }
+
+dialog.guide { max-width:30rem; padding:0; border:1px solid var(--border2);
+               border-radius:var(--r); background:var(--panel); color:var(--text);
+               box-shadow:0 12px 40px rgba(20,28,45,.22); }
+dialog.guide::backdrop { background:rgba(20,28,45,.38); }
+.guide-body { padding:.9rem 1.05rem 1.05rem; }
+.guide-head { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
+.guide-head h3 { margin:0 0 .5rem; font-size:.86rem; }
+.guide-x { border:0; background:none; color:var(--muted); font-size:1.05rem; line-height:1;
+           padding:0 .1rem; cursor:pointer; }
+.guide-x:hover { color:var(--text); }
+.guide-steps { margin:0; padding-left:1.15rem; }
+.guide-steps li { margin:.3rem 0; font-size:.78rem; line-height:1.45; }
+.guide-steps code { background:var(--bg); border:1px solid var(--border);
+                    border-radius:3px; padding:0 .22rem; font-size:.92em; }
+.guide-link { display:inline-block; margin-top:.7rem; font-size:.78rem; font-weight:600;
+              word-break:break-all; }
+.guide-note { margin:.7rem 0 0; padding-top:.6rem; border-top:1px solid var(--border);
+              color:var(--muted); font-size:.72rem; line-height:1.45; }
+
+.btn { padding:.5rem .95rem; background:var(--accent); border:1px solid var(--accent-d);
+       color:#fff; font-weight:700; border-radius:var(--r); cursor:pointer; font-size:.85rem; }
+.btn:hover { background:var(--accent-d); }
+.btn.ghost { background:#fff; color:var(--accent); border-color:var(--border2); }
+.btn.sm { padding:.3rem .6rem; font-size:.76rem; }
+.iconbtn { background:none; border:1px solid var(--border2); border-radius:var(--r);
+           cursor:pointer; padding:.25rem .55rem; color:var(--muted); }
+.iconbtn:hover { color:var(--text); }
+
+.group-title { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+               color:var(--muted); margin:.9rem 0 .4rem; }
+.actions { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:var(--gap); }
+.acard { text-align:left; background:var(--panel); border:1px solid var(--border);
+         border-radius:var(--r); padding:.6rem .7rem; cursor:pointer; display:flex;
+         flex-direction:column; gap:.2rem; }
+.acard:hover { border-color:var(--accent); }
+.acard.danger:hover { border-color:var(--danger); }
+.acard .alabel { font-weight:700; }
+.acard.danger .alabel { color:var(--danger); }
+.acard .acmd { font-size:.72rem; color:var(--accent); }
+.acard .adesc { font-size:.74rem; color:var(--muted); }
+.acard.running { border-color:var(--warn); }
+
+.host-row { display:flex; gap:.5rem; align-items:center; margin-bottom:.35rem; }
+.host-row input[type=text] { flex:1; }
+.pri { display:flex; gap:.3rem; align-items:center; color:var(--muted); font-size:.78rem; }
+
+/* Drag handle. The ::after extends the grab area a few pixels either side, so
+   it is easy to hit without drawing a thick divider. */
+.gutter { flex:0 0 5px; position:relative; background:var(--border); cursor:col-resize; }
+.gutter::after { content:''; position:absolute; top:0; bottom:0; left:-4px; right:-4px; }
+.gutter:hover, .gutter.dragging { background:var(--accent); }
+
+.term { flex:0 0 var(--term-w); min-width:260px; max-width:85%;
+        display:flex; flex-direction:column; min-height:0;
+        background:var(--term-bg); color:var(--term-fg); }
+/* Collapsing hides the divider too, so the form gets the whole width. */
+.shell.no-term .term, .shell.no-term .gutter { display:none; }
+
+.term-head { flex:0 0 auto; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;
+             padding:.35rem .7rem; color:var(--term-dim); font-size:.75rem;
+             border-bottom:1px solid rgba(255,255,255,.08); }
+#termTitle { font-weight:600; white-space:nowrap; overflow:hidden;
+             text-overflow:ellipsis; max-width:45%; }
+.term-head .iconbtn { border-color:rgba(255,255,255,.18); color:var(--term-dim); }
+.term-head .iconbtn:hover { color:var(--term-fg); border-color:var(--term-dim); }
+.term-out { flex:1 1 auto; overflow:auto; margin:0; padding:.5rem .7rem .9rem;
+            font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.78rem;
+            line-height:1.45; white-space:pre-wrap; word-break:break-word; }
+
+/* Too narrow to split: stack the output under the form and drop the handle,
+   rather than squeezing both into unusable columns. */
+@media (max-width:900px) {
+  .shell { flex-direction:column; }
+  .gutter { display:none; }
+  .term { flex:0 0 var(--term-h); min-width:0; max-width:none;
+          border-top:2px solid var(--accent); }
+}
+
+.tag-picker { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.35rem; }
+.tag-card { border:1px solid var(--border2); background:#fff; border-radius:var(--r);
+            padding:.3rem .55rem; cursor:pointer; font-size:.76rem; }
+.tag-card:hover { border-color:var(--accent); }
+.tag-card.tag-active { border-color:var(--ok); background:#e7f4ec; }
+.tag-sha { font-family:ui-monospace,Menlo,monospace; font-weight:700; }
+.tag-badge { background:var(--accent); color:#fff; border-radius:8px; padding:0 .4rem; font-size:.66rem; }
+.tag-age { color:var(--muted); }
+/* Shown by panel.js while a fetch is in flight, then reset to the stylesheet's
+   display:none by clearing the inline style. */
+.spinner { display:none; }
+
+/* Briefly outlines the Configure section a flow's edit step jumped to, so the
+   landing point is obvious after the scroll. */
+.card.flash { box-shadow:0 0 0 2px var(--warn); }
+
+/* ===== Tutorial ========================================================
+   A walkthrough rather than reference documentation: numbered steps, every
+   command pre-filled with this environment's real values, and a Run button
+   wherever the step is something the panel can already do. Styled from the
+   same tokens as the rest of the panel so it reads as one application. */
+.tut-nav { position:sticky; top:0; z-index:5; display:flex; gap:.3rem; flex-wrap:wrap;
+           padding:.45rem 0 .5rem; margin-bottom:.4rem; background:var(--bg);
+           border-bottom:1px solid var(--border); }
+.tn { padding:.25rem .55rem; border:1px solid var(--border2); border-radius:99px;
+      background:var(--panel); color:var(--muted); font-size:.73rem; font-weight:600;
+      text-decoration:none; white-space:nowrap; }
+.tn:hover { border-color:var(--accent); color:var(--accent); }
+.tn.active { background:var(--accent); border-color:var(--accent-d); color:#fff; }
+
+/* The walkthrough covers both deployment shapes; the toggle hides the steps
+   that do not apply, so nobody follows a load-balancer step on one server. */
+.tut-shape-pick { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+                  gap:var(--gap); margin:.6rem 0 .3rem; }
+.tut-shape { text-align:left; background:var(--panel); border:1px solid var(--border);
+             border-radius:var(--r); padding:.6rem .7rem; cursor:pointer; line-height:1.5; }
+.tut-shape:hover { border-color:var(--accent); }
+.tut-shape b { display:block; margin-bottom:.15rem; }
+.tut-shape span { color:var(--muted); font-size:.78rem; }
+.tut-wrap[data-shape="single"] .tut-shape[data-pick="single"],
+.tut-wrap[data-shape="cluster"] .tut-shape[data-pick="cluster"] {
+  border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+.tut-wrap[data-shape="single"]  [data-only="cluster"],
+.tut-wrap[data-shape="cluster"] [data-only="single"] { display:none; }
+
+/* scroll-margin keeps a jumped-to heading clear of the sticky nav above it */
+.tut-section { margin:0 0 1.6rem; scroll-margin-top:3rem; }
+.tut-h2 { font-size:1.05rem; margin:.3rem 0 .5rem; letter-spacing:-.01em; }
+.tut-h3 { font-size:.88rem; margin:1rem 0 .4rem; }
+.tut-part { display:inline-block; background:var(--accent); color:#fff; border-radius:var(--r);
+            padding:.05rem .45rem; font-size:.68rem; letter-spacing:.04em; text-transform:uppercase;
+            margin-right:.45rem; vertical-align:middle; }
+.tut-p { color:var(--text); line-height:1.6; margin:.35rem 0 .7rem; }
+.tut-ul, .tut-ol { margin:.35rem 0 .7rem; padding-left:1.15rem; line-height:1.65; }
+.tut-ul li, .tut-ol li { margin:.15rem 0; }
+
+.tut-step { background:var(--panel); border:1px solid var(--border); border-radius:var(--r);
+            margin-bottom:var(--gap); overflow:hidden; }
+.tut-step-head { display:flex; align-items:center; gap:.5rem; padding:.5rem .8rem;
+                 border-bottom:1px solid var(--border); font-weight:700; }
+.tsn { flex:0 0 auto; min-width:1.5rem; height:1.5rem; display:inline-flex; align-items:center;
+       justify-content:center; background:var(--bg); border:1px solid var(--border2);
+       border-radius:var(--r); font-size:.7rem; color:var(--muted); padding:0 .3rem; }
+.tut-step-body { padding:.6rem .8rem .75rem; line-height:1.6; }
+.tut-step-body > :first-child { margin-top:0; }
+.tut-step-body > :last-child { margin-bottom:0; }
+
+/* Code block + copy button. The button is absolutely positioned so it never
+   shifts the code, and the block scrolls rather than wrapping — a wrapped
+   shell command is a command someone will paste wrong. */
+.tut-code { position:relative; background:var(--term-bg); color:var(--term-fg);
+            border-radius:var(--r); padding:.55rem 3.6rem .55rem .7rem; margin:.5rem 0;
+            font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.76rem;
+            line-height:1.55; overflow-x:auto; white-space:pre; }
+.tut-code .cmt { color:var(--term-dim); }
+.copy-btn { position:absolute; top:.35rem; right:.35rem; padding:.15rem .45rem;
+            background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18);
+            color:var(--term-dim); border-radius:var(--r); font-size:.68rem; cursor:pointer; }
+.copy-btn:hover { color:var(--term-fg); border-color:var(--term-dim); }
+.copy-btn.copied { color:#8ce0ad; border-color:#8ce0ad; }
+
+.tut-diagram { background:var(--panel); border:1px solid var(--border); border-radius:var(--r);
+               padding:.7rem .8rem; margin:.5rem 0 .9rem; overflow-x:auto; white-space:pre;
+               font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+               font-size:.72rem; line-height:1.35; color:var(--muted); }
+
+.tut-callout { border-left:3px solid var(--border2); border-radius:0 var(--r) var(--r) 0;
+               background:var(--panel); padding:.5rem .7rem; margin:.5rem 0; line-height:1.55; }
+.tut-callout.info   { border-left-color:var(--accent); }
+.tut-callout.tip    { border-left-color:var(--ok); }
+.tut-callout.warn   { border-left-color:var(--warn); }
+.tut-callout.danger { border-left-color:var(--danger); }
+
+/* Runs the same whitelisted action as the matching Deploy-tab card. */
+.tut-run { display:inline-flex; align-items:center; gap:.35rem; margin:.4rem .4rem .1rem 0;
+           padding:.35rem .7rem; background:var(--panel); border:1px solid var(--accent);
+           color:var(--accent); font-weight:700; font-size:.78rem; border-radius:var(--r);
+           cursor:pointer; }
+.tut-run:hover { background:var(--accent); color:#fff; }
+.tut-run.danger { border-color:var(--danger); color:var(--danger); }
+.tut-run.danger:hover { background:var(--danger); color:#fff; }
+.tut-run.running { border-color:var(--warn); color:var(--warn); }
+.tut-runnote { color:var(--muted); font-size:.72rem; margin-top:.2rem; }
+
+.te-row { background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--danger);
+          border-radius:0 var(--r) var(--r) 0; padding:.5rem .7rem; margin-bottom:var(--gap);
+          line-height:1.55; }
+.te-sym { font-weight:700; margin-bottom:.2rem; }
+.te-cause, .te-fix { font-size:.8rem; color:var(--muted); }
+.te-fix { color:var(--text); }
+.tut-section code, .tut-callout code, .te-row code {
+  background:var(--bg); border:1px solid var(--border); border-radius:4px;
+  padding:0 .25rem; font-size:.92em; }
+
+/* ===== Deploy tab: procedures and groups ================================
+   The release path is a sequence, so it is drawn as one — numbered cards left
+   to right with arrows between them, scrolling horizontally rather than
+   wrapping, because a wrapped flow stops reading as an order. Groups that have
+   no inherent order (Check & observe, Recover) stay as plain grids, so the
+   difference between "do these in turn" and "run whichever you need" is visible
+   without reading a word. */
+
+.deploy-lede { color:var(--muted); line-height:1.6; margin:.2rem 0 .9rem; max-width:70ch; }
+.deploy-lede b { color:var(--text); }
+
+.flow-group { background:var(--panel); border:1px solid var(--border); border-radius:var(--r);
+              margin-bottom:.8rem; }
+.flow-group.lead { border-color:var(--accent); box-shadow:inset 0 0 0 1px rgba(58,91,217,.14); }
+.flow-head { padding:.6rem .8rem .1rem; }
+.flow-title { font-weight:700; display:flex; align-items:center; gap:.5rem; }
+.flow-badge { background:var(--accent); color:#fff; border-radius:99px; padding:.05rem .5rem;
+              font-size:.66rem; letter-spacing:.04em; text-transform:uppercase; }
+.flow-desc { color:var(--muted); font-size:.78rem; margin-top:.2rem; line-height:1.5; }
+
+.flow-rail { display:flex; align-items:stretch; gap:1.5rem; overflow-x:auto;
+             padding:.7rem .8rem .9rem; }
+.fstep { position:relative; flex:0 0 210px; display:flex; flex-direction:column; gap:.25rem;
+         text-align:left; background:var(--bg); border:1px solid var(--border2);
+         border-radius:var(--r); padding:.5rem .6rem; cursor:pointer; }
+.fstep:hover { border-color:var(--accent); }
+/* The connector sits in the gap, so it never overlaps a card's content. */
+.fstep:not(:last-child)::after { content:'→'; position:absolute; right:-1.12rem; top:50%;
+                                 transform:translateY(-50%); color:var(--border2);
+                                 font-size:1.05rem; line-height:1; pointer-events:none; }
+.fstep-top { display:flex; align-items:center; gap:.4rem; }
+.fsn { flex:0 0 auto; width:1.3rem; height:1.3rem; display:inline-flex; align-items:center;
+       justify-content:center; background:var(--panel); border:1px solid var(--border2);
+       border-radius:50%; font-size:.68rem; font-weight:700; color:var(--muted); }
+.fstep-label { font-weight:700; }
+.fstep-cmd { font-size:.68rem; color:var(--accent); word-break:break-all; }
+.fstep-desc { font-size:.72rem; color:var(--muted); line-height:1.45; }
+.fstep-effect { font-size:.7rem; color:var(--muted); line-height:1.45;
+                border-top:1px dashed var(--border2); padding-top:.28rem; margin-top:.1rem; }
+
+/* The edit step is not a command — dashed, so it never reads as a button that
+   runs something, and tinted, so the one manual step in the flow is findable. */
+.fstep.edit { background:#fffdf5; border-style:dashed; border-color:var(--warn); }
+.fstep.edit .fsn { border-color:var(--warn); color:var(--warn); }
+.fstep.edit:hover { border-color:var(--warn); box-shadow:inset 0 0 0 1px var(--warn); }
+.fstep-keys { display:flex; flex-wrap:wrap; gap:.2rem; margin-top:.1rem; }
+.fkey { background:var(--panel); border:1px solid var(--border2); border-radius:4px;
+        padding:0 .3rem; font-family:ui-monospace,Menlo,monospace; font-size:.68rem; }
+
+/* Mutating steps carry the danger tone the grid cards already use. */
+.fstep.danger { border-color:#e6c4bf; }
+.fstep.danger .fstep-label { color:var(--danger); }
+.fstep.danger:hover { border-color:var(--danger); }
+.fstep.running { border-color:var(--warn); box-shadow:inset 0 0 0 1px var(--warn); }
+.fstep-ssh { font-size:.64rem; color:var(--muted); text-transform:uppercase;
+             letter-spacing:.04em; }
+
+.grid-group { margin:1.1rem 0 .3rem; }
+.grid-group .gg-head { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap;
+                       margin-bottom:.35rem; }
+.gg-title { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+.gg-desc { color:var(--muted); font-size:.76rem; }
+.gg-danger .gg-title { color:var(--danger); }
+.acard .aeffect { font-size:.7rem; color:var(--muted); line-height:1.45;
+                  border-top:1px dashed var(--border); padding-top:.28rem; margin-top:.15rem; }
+
+@media (max-width:900px) {
+  /* Stack the flow instead of scrolling it sideways on a narrow window; the
+     arrow rotates so the sequence still reads in the direction of travel. */
+  .flow-rail { flex-direction:column; gap:1.15rem; }
+  .fstep { flex:1 1 auto; }
+  .fstep:not(:last-child)::after { right:auto; left:1rem; top:auto; bottom:-1.02rem;
+                                   transform:rotate(90deg); }
+}
+
+/* Utility classes replacing inline style attributes.
+   The panel's own CSP is `style-src 'self'`, which blocks a style="" attribute
+   outright — every one of these rendered with its styling silently dropped,
+   and the only evidence was four console errors nobody was reading. Anything
+   that needs styling gets a class; tests/test_panel_wiring.py pins that. */
+.ok { color:var(--ok); }
+.err, .v.err { color:var(--danger); }
+.topbar-right { margin-left:auto; display:flex; align-items:center; gap:.8rem; }
+.hint.block { margin:.45rem 0 .6rem; }
+.hint.spaced { margin-top:.7rem; }
+.iconbtn.push-right { margin-left:auto; }
+.tut-callout.spaced { margin-top:1rem; }
+
+/* Jobs: a command keeps running whatever the page does, and this bar is how you
+   get back to one. Running chips are amber, finished ones green or red. */
+.jobbar { flex:0 0 auto; display:flex; flex-wrap:wrap; gap:.3rem; padding:.3rem .7rem;
+          border-bottom:1px solid rgba(255,255,255,.08); }
+.jobbar:empty { display:none; }
+.jobchip { background:none; border:1px solid rgba(255,255,255,.18); border-radius:var(--r);
+           color:var(--term-dim); font-size:.7rem; padding:.1rem .45rem; cursor:pointer; }
+.jobchip:hover { color:var(--term-fg); }
+.jobchip.running { border-color:var(--warn); color:#f0c27a; }
+.jobchip.ok { border-color:var(--ok); }
+.jobchip.bad { border-color:var(--danger); }
+.term-head .iconbtn.danger { border-color:var(--danger); color:#f1998e; }

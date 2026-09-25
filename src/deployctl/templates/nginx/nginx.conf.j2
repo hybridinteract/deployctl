@@ -1,0 +1,119 @@
+{#-
+  The http {} block. Server blocks live in site.conf.j2.
+
+  The one mode-dependent piece is real_ip: behind a load balancer the peer address
+  is the LB, so the LB's X-Forwarded-For must be trusted for $remote_addr — and
+  therefore the rate-limit zones, which key on it — to mean the real client.
+  Trusting that header from an arbitrary peer would let anyone spoof their way
+  past rate limiting, which is why it is scoped to TRUSTED_PROXY_CIDR.
+-#}
+# nginx configuration for {{ PROJECT_NAME }} ({{ ENV }})
+
+user nginx;
+worker_processes auto;
+worker_rlimit_nofile 65535;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 4096;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+{% if TLS_LB and TRUSTED_PROXY_CIDR %}
+    # ---- Real client IP (behind the load balancer) ----
+    # The LB sits inside this range and forwards the client address in
+    # X-Forwarded-For. Trusting it here makes $remote_addr — and the rate-limit
+    # zones below, which key on $binary_remote_addr — reflect the real client
+    # rather than counting every request against the load balancer.
+    set_real_ip_from {{ TRUSTED_PROXY_CIDR }};
+    real_ip_header   X-Forwarded-For;
+    real_ip_recursive on;
+
+{% endif %}
+    # ---- Forwarded scheme and port ----
+    # With TLS terminating upstream, $scheme here is 'http' even though the client
+    # used HTTPS. Trust the forwarded header when present, fall back to the real
+    # connection otherwise, so redirects and absolute URLs come out right.
+    map $http_x_forwarded_proto $forwarded_proto {
+        default $http_x_forwarded_proto;
+        ''      $scheme;
+    }
+    map $http_x_forwarded_port $forwarded_port {
+        default $http_x_forwarded_port;
+        ''      $server_port;
+    }
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for" '
+                    'rt=$request_time uct="$upstream_connect_time" '
+                    'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+    access_log /var/log/nginx/access.log main buffer=32k flush=5s;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    keepalive_requests 100;
+    types_hash_max_size 2048;
+    server_tokens off;
+
+    client_max_body_size {{ MAX_BODY_SIZE }};
+    client_body_buffer_size 128k;
+    client_header_buffer_size 1k;
+    large_client_header_buffers 4 16k;
+    client_body_timeout 60s;
+    client_header_timeout 30s;
+    send_timeout 30s;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1000;
+    gzip_disable "msie6";
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/json
+        application/javascript
+        application/xml+rss
+        application/rss+xml
+        application/atom+xml
+        image/svg+xml;
+
+    # ---- Rate limiting (keyed on the real client IP established above) ----
+    limit_req_zone $binary_remote_addr zone=api_limit:10m rate={{ RATE_LIMIT_PER_MINUTE }}r/m;
+    limit_req_zone $binary_remote_addr zone=api_burst:10m rate={{ RATE_LIMIT_PER_SECOND }}r/s;
+    limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+    limit_req_status 429;
+    limit_conn_status 429;
+
+    # ---- Proxy defaults ----
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    proxy_buffer_size 4k;
+    proxy_buffers 8 4k;
+    proxy_busy_buffers_size 8k;
+    proxy_temp_file_write_size 8k;
+    proxy_max_temp_file_size 0;
+
+    # ---- Security headers applied to every response ----
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+
+    # The generated server block.
+    include /etc/nginx/conf.d/*.conf;
+}

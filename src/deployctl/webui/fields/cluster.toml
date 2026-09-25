@@ -1,0 +1,116 @@
+# Panel fields for MODE=cluster — N hosts behind a load balancer, managed databases.
+
+[[section]]
+id = "hosts"
+title = "Hosts & access"
+modes = ["cluster"]
+special = "hosts"
+description = "Every app server, at the address this machine reaches over SSH. Mark the ONE primary — it runs Celery Beat and database migrations. Adding a server later is one more row here plus attaching it to the LB and both databases' trusted sources."
+
+[[section.field]]
+key = "SSH_USER"
+label = "SSH user"
+target = "env"
+default = "deploy"
+help = "Unprivileged user in the docker group. Not root."
+
+[[section.field]]
+key = "REMOTE_DIR"
+label = "Remote directory"
+target = "env"
+placeholder = "/opt/myapp"
+
+[[section.field]]
+key = "TRUSTED_PROXY_CIDR"
+label = "VPC / proxy CIDR"
+target = "env"
+placeholder = "10.0.0.0/20"
+help = "nginx trusts the load balancer's X-Forwarded-For inside this range, so rate limiting sees real client IPs."
+
+[[section]]
+id = "postgres"
+title = "PostgreSQL (managed)"
+modes = ["cluster"]
+description = "External managed database. Prefer the provider's PRIVATE host, and add EVERY app server to its trusted sources."
+
+[[section.field]]
+key = "POSTGRES_HOST"
+label = "Host"
+target = "env"
+required = true
+placeholder = "private-db-….ondigitalocean.com"
+
+[[section.field]]
+key = "POSTGRES_PORT"
+label = "Port"
+target = "env"
+type = "number"
+
+[[section.field]]
+key = "POSTGRES_DB"
+label = "Database"
+target = "env"
+required = true
+
+[[section.field]]
+key = "POSTGRES_USER"
+label = "User"
+target = "env"
+required = true
+
+[[section.field]]
+key = "POSTGRES_PASSWORD"
+label = "Password"
+target = "env"
+type = "password"
+secret = true
+required = true
+
+[[section.field]]
+key = "DB_SSL_MODE"
+label = "SSL mode"
+target = "env"
+type = "select"
+options = ["require", "verify-ca", "verify-full", "disable"]
+
+[[section]]
+id = "redis"
+title = "Redis (managed, TLS)"
+modes = ["cluster"]
+description = "Shared broker for every host. Add EVERY app server to its trusted sources too — Postgres-only trusted sources is the classic mistake: the API looks healthy while Celery never connects."
+
+[[section.field]]
+key = "REDIS_HOST"
+label = "Host"
+target = "env"
+required = true
+placeholder = "private-cache-….ondigitalocean.com"
+
+[[section.field]]
+key = "REDIS_PORT"
+label = "Port"
+target = "env"
+type = "number"
+
+[[section.field]]
+key = "REDIS_PASSWORD"
+label = "Password"
+target = "env"
+type = "password"
+secret = true
+required = true
+
+[[section.field]]
+key = "REDIS_SSL"
+label = "TLS"
+target = "env"
+type = "select"
+options = ["true", "false"]
+
+[[section.field]]
+key = "REDIS_SSL_CERT_REQS"
+label = "Certificate verification"
+target = "env"
+type = "select"
+options = ["none", "optional", "required"]
+help = "'none' for managed Redis — its CA is not in the public trust store; the connection stays encrypted."

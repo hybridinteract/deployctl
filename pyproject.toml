@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deployctl"
+dynamic = ["version"]
+description = "Deploy containerized apps to one server or a fleet over SSH — CLI, CI/CD workflows and a local control panel."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Hybrid Interactive" }]
+dependencies = [
+    "typer>=0.12",              # the command surface
+    "jinja2>=3.1",              # templates/ → generated/
+    "fastapi>=0.110",           # the control panel
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",  # form posts from the Configure tab
+]
+
+[project.scripts]
+deployctl = "deployctl.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",              # FastAPI's TestClient, for the panel tests
+]
+
+[tool.hatch.version]
+path = "src/deployctl/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+# Everything under the package ships: the bash engine, templates, profiles and the
+# panel's static files are data the code reads at run time.
+packages = ["src/deployctl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
