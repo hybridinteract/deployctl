@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# A project's deploy directory never belongs in the tool's repository — running
+# `deployctl init` here by mistake would create one.
+/deploy/
+
+.DS_Store

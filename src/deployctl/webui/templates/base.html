@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>deployctl · control panel</title>
+  {#
+    Every asset is served from this origin. Nothing is loaded from a CDN: a page
+    that can start a production deploy must not execute script fetched from a
+    third party, and the panel has to work when the network does not. The
+    Content-Security-Policy set in panel/security.py enforces both, which is why
+    there are no inline <script> blocks or onclick= attributes anywhere —
+    behaviour is attached by delegation in static/panel.js.
+  #}
+  <link rel="stylesheet" href="/static/panel.css">
+  <link rel="icon" href="data:,">
+</head>
+{# The token every acting request carries, and the environment the page is bound
+   to, read once by panel.js rather than interpolated into each URL. Hosts and
+   image are what a confirmation dialog names — see confirmText in panel.js. #}
+<body data-token="{{ token }}" data-env="{{ env }}"
+      data-hosts="{{ summary.hosts|join(' ') if summary else '' }}" data-image="{{ summary.image if summary else '' }}">
+{% block body %}{% endblock %}
+<script src="/static/panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{#- Running and recent jobs. A job keeps running whatever this page does, so this
+    bar is how you get back to one: click a chip to replay its output and follow
+    it live. Rendered on page load and re-fetched whenever a job starts or ends. -#}
+{% for j in jobs %}
+<button type="button" class="jobchip {{ 'running' if j.running else ('ok' if j.returncode == 0 and not j.cancelled else 'bad') }}"
+        data-act="attach" data-job="{{ j.id }}" data-label="{{ j.label }} · {{ j.env }}"
+        title="{{ j.command }}">{{ j.label }} · {{ j.env }} · {{ j.status }}</button>
+{% endfor %}

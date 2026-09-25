@@ -1,0 +1,34 @@
+# Control-panel inputs for the keys in app.env.template. Keys must match it.
+
+[[section]]
+id = "observability"
+title = "Error tracking"
+description = "Where the app reports exceptions."
+
+[[section.field]]
+key = "SENTRY_DSN"
+label = "Sentry DSN"
+target = "app"
+secret = true
+
+[[section]]
+id = "storage"
+title = "Object storage"
+description = "Uploads live here, never on a host's disk."
+
+[[section.field]]
+key = "S3_BUCKET_NAME"
+label = "Bucket"
+target = "app"
+
+[[section.field]]
+key = "S3_ACCESS_KEY_ID"
+label = "Access key"
+target = "app"
+secret = true
+
+[[section.field]]
+key = "S3_SECRET_ACCESS_KEY"
+label = "Secret key"
+target = "app"
+secret = true

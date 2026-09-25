@@ -1,0 +1,147 @@
+# Panel fields shown for EVERY deployment mode.
+#
+# target decides which file a value is written to:
+#   common → config/common.env      env → config/<env>.env      app → config/app.<env>.env
+
+[[section]]
+id = "shape"
+title = "Deployment shape"
+description = "How many servers, where TLS terminates, and whether the databases are containers. Switching this on an environment that is already deployed is a migration, not a toggle — read the help below."
+
+[[section.field]]
+key = "MODE"
+label = "Mode"
+target = "env"
+type = "select"
+options = ["single", "cluster"]
+help = "single: one server, Let's Encrypt on the host, containerized Postgres/Redis. cluster: N servers behind a load balancer, managed databases. This sets DEFAULTS only — TLS_MODE, POSTGRES_MODE and REDIS_MODE win wherever they are set explicitly below, so after changing this run Validate and fix anything it flags."
+
+[[section]]
+id = "registry"
+title = "Registry access"
+description = "Credentials every host uses to docker-login before pulling the image. A GitHub classic PAT with only read:packages; SSO orgs must authorize it."
+
+[[section.field]]
+key = "REGISTRY_USER"
+label = "Registry user / org"
+target = "common"
+placeholder = "your-github-user"
+help = "Your GitHub username — who logs in. NOT the image path; that is IMAGE_REPO below."
+
+[[section.field]]
+key = "REGISTRY_TOKEN"
+label = "Registry token"
+target = "common"
+type = "password"
+secret = true
+placeholder = "ghp_…"
+help = "read:packages is enough to pull; write:packages only if you use `image push` from this machine."
+
+[section.field.guide]
+title = "Generating a GitHub registry token"
+link = "https://github.com/settings/tokens"
+link_label = "Open GitHub → Tokens (classic)"
+steps = [
+  "GitHub → your avatar → Settings → Developer settings → Personal access tokens → Tokens (classic). It is the last item in the sidebar of your ACCOUNT settings, not the repo's.",
+  "Generate new token (classic). Name it for this project and give it an expiry you will notice.",
+  "Tick read:packages and nothing else. The servers only ever pull.",
+  "Generate, then copy it straight away — GitHub shows the value once.",
+  "If the organisation uses SSO: on the token's row, Configure SSO → Authorize. Skipping this is why a token that looks right fails on the host, mid-deploy.",
+  "Paste it here and press Save. It is stored in config/common.env and never sent back to this page.",
+]
+note = "Pushing from this machine (`deployctl image push`) also needs write:packages. CI needs no token at all — `deployctl ci init` writes a workflow that uses the run's own GITHUB_TOKEN, so you only flip Settings → Actions → General → Workflow permissions to \"Read and write\"."
+
+[[section]]
+id = "project"
+title = "Project & domain"
+description = "Identity and the public hostname. Changing PROJECT_NAME renames every container and volume — do it before the first deploy, not after."
+
+[[section.field]]
+key = "PROJECT_NAME"
+label = "Project name"
+target = "common"
+required = true
+placeholder = "myapp"
+help = "Lowercase letters, digits, hyphens. Prefixes container/network/volume names."
+
+[[section.field]]
+key = "BASE_DOMAIN"
+label = "Base domain"
+target = "common"
+required = true
+placeholder = "example.com"
+
+[[section.field]]
+key = "API_SUBDOMAIN"
+label = "API subdomain"
+target = "env"
+default = "api"
+help = "The app is served at https://<subdomain>.<base domain>."
+
+[[section]]
+id = "image"
+title = "Application image"
+description = "Built by CI (or `deployctl image push`) and pulled by every host. Pin an immutable git-sha tag — never 'latest'."
+
+[[section.field]]
+key = "IMAGE_REPO"
+label = "Image repository"
+target = "common"
+required = true
+placeholder = "ghcr.io/your-org/your-app"
+
+[[section.field]]
+key = "IMAGE_TAG"
+label = "Image tag"
+target = "env"
+required = true
+placeholder = "fb31c25"
+help = "The git short SHA to deploy. Use the tag picker to fetch recent ones from the registry."
+
+[[section]]
+id = "runtime"
+title = "Runtime"
+description = "Per-host process counts, the memory they run in, and logging."
+
+[[section.field]]
+key = "API_WORKERS"
+label = "API workers"
+target = "env"
+type = "number"
+help = "Each is a process of ~128 MiB, plus one parent. Must fit in the API memory limit."
+
+[[section.field]]
+key = "API_MEM_LIMIT"
+label = "API memory limit"
+target = "env"
+placeholder = "768m"
+help = "Docker memory cap for the api container, e.g. 768m or 1g. Validate warns when the workers cannot fit."
+
+[[section.field]]
+key = "CELERY_WORKERS"
+label = "Celery worker concurrency"
+target = "env"
+type = "number"
+help = "Each is a process of ~128 MiB, plus one parent. Must fit in the worker memory limit."
+
+[[section.field]]
+key = "WORKER_MEM_LIMIT"
+label = "Worker memory limit"
+target = "env"
+placeholder = "512m"
+help = "Docker memory cap for celery_worker. ffmpeg jobs count against it too. Too small and the worker restarts in a loop while deploys still pass."
+
+[[section.field]]
+key = "LOG_LEVEL"
+label = "Log level"
+target = "env"
+type = "select"
+options = ["DEBUG", "INFO", "WARNING", "ERROR"]
+
+[[section.field]]
+key = "ENABLE_DOCS"
+label = "Serve /docs"
+target = "env"
+type = "select"
+options = ["false", "true"]
+help = "/docs is additionally protected by the htpasswd file on each host."

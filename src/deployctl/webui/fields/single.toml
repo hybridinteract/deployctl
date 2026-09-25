@@ -1,0 +1,104 @@
+# Panel fields for MODE=single — one server, Let's Encrypt, containerized services.
+
+[[section]]
+id = "server"
+title = "Server & access"
+modes = ["single"]
+description = "The one machine everything runs on, reached over SSH from this control machine."
+
+[[section.field]]
+key = "HOSTS"
+label = "Server address"
+target = "env"
+required = true
+placeholder = "203.0.113.10"
+
+[[section.field]]
+key = "SSH_USER"
+label = "SSH user"
+target = "env"
+default = "deploy"
+help = "Unprivileged user in the docker group. Not root."
+
+[[section.field]]
+key = "REMOTE_DIR"
+label = "Remote directory"
+target = "env"
+placeholder = "/opt/myapp"
+help = "Where artifacts land and compose runs. Must be writable by the SSH user."
+
+[[section]]
+id = "tls"
+title = "TLS (Let's Encrypt)"
+modes = ["single"]
+description = "The certificate is obtained and renewed on the server; DNS must point the API domain at it and ports 80/443 must be open."
+
+[[section.field]]
+key = "ACME_EMAIL"
+label = "ACME email"
+target = "env"
+required = true
+placeholder = "ops@example.com"
+help = "Let's Encrypt sends expiry warnings here."
+
+[[section]]
+id = "postgres"
+title = "PostgreSQL"
+modes = ["single"]
+description = "Containerized by default (password generated once, kept across regenerates). Its volume is the only durable state on the server — schedule backups. Switch POSTGRES_MODE to 'external' for a managed database."
+
+[[section.field]]
+key = "POSTGRES_MODE"
+label = "Mode"
+target = "env"
+type = "select"
+options = ["container", "external"]
+
+[[section.field]]
+key = "POSTGRES_DB"
+label = "Database"
+target = "env"
+required = true
+placeholder = "app_db"
+
+[[section.field]]
+key = "POSTGRES_USER"
+label = "User"
+target = "env"
+required = true
+placeholder = "app_user"
+
+[[section.field]]
+key = "POSTGRES_HOST"
+label = "Host (external mode only)"
+target = "env"
+placeholder = "db-….ondigitalocean.com"
+help = "Leave empty in container mode."
+
+[[section.field]]
+key = "POSTGRES_PASSWORD"
+label = "Password (external mode only)"
+target = "env"
+type = "password"
+secret = true
+help = "Container mode generates and manages this automatically."
+
+[[section.field]]
+key = "DB_SSL_MODE"
+label = "SSL mode (external mode only)"
+target = "env"
+type = "select"
+options = ["disable", "require", "verify-ca", "verify-full"]
+
+[[section]]
+id = "redis"
+title = "Redis"
+modes = ["single"]
+description = "Containerized cache + Celery broker; the password is generated once and stays out of the process list."
+
+[[section.field]]
+key = "REDIS_MODE"
+label = "Mode"
+target = "env"
+type = "select"
+options = ["container", "external"]

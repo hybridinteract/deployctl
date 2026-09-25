@@ -1,0 +1,424 @@
+{#-
+  The stack for one host, in one template for both deployment shapes.
+
+  Everything optional is gated on a flag computed in cli/config.py, so this file
+  never has to ask "which mode are we in?" — only "is this piece present?".
+
+    WITH_POSTGRES   Postgres runs here as a container (single-server default)
+    WITH_REDIS      Redis runs here as a container (single-server default)
+    WITH_CERTBOT    Let's Encrypt: nginx publishes 443 and certbot renews
+    TLS_LE / TLS_LB where TLS terminates: on this host, or at a load balancer
+    IS_PRIMARY      this host runs Celery Beat and database migrations
+
+  Relative paths resolve against THIS file's directory (generated/<role>/), so
+  ../.env.<env> and ../nginx/* point at the shared artifacts one level up — the
+  same layout locally and after the artifacts are rsynced into REMOTE_DIR.
+
+  The image is always pulled. There is deliberately no build: key anywhere: a
+  deployment target needs Docker and nothing else — no source, no toolchain.
+-#}
+services:
+  # ---- Edge ---------------------------------------------------------------
+{% if TLS_LE %}
+  # Terminates TLS with the Let's Encrypt certificate held on this host.
+{% elif TLS_LB %}
+  # HTTP only — TLS terminates at the load balancer, which forwards to :80.
+{% else %}
+  # HTTP only — something in front of this host is expected to terminate TLS.
+{% endif %}
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: {{ CONTAINER_PREFIX }}_nginx
+    restart: unless-stopped
+{% if WITH_CERTBOT %}
+    # nginx loads certificates when it starts or reloads, never on its own. The
+    # certbot service renews unattended, so without this the renewed certificate
+    # sits on disk while nginx serves the old one from memory — until a deploy
+    # happens to reload it, or the old one expires in browsers. Reloading twice a
+    # day matches certbot's own cadence; a reload drops no connections. `exec`
+    # keeps nginx as PID 1, so `docker stop` still ends it gracefully.
+    command: ["/bin/sh", "-c", "while :; do sleep 12h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"]
+{% endif %}
+    ports:
+      - "80:80"
+{% if TLS_LE %}
+      - "443:443"
+{% endif %}
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/site.conf:/etc/nginx/conf.d/site.conf:ro
+      - ../nginx/extra:/etc/nginx/extra:ro
+      # Operator-managed /docs basic-auth file. Server-side state: deployctl
+      # creates it empty (so /docs fails closed) and never overwrites it.
+      - ../nginx/auth:/etc/nginx/auth:ro
+{% if TLS_LE %}
+      # Certificates and the ACME webroot are SERVER state, written by certbot.
+      # They live outside the synced artifact tree so a deploy cannot delete them.
+      - ../certbot/conf:/etc/letsencrypt:ro
+      - ../certbot/www:/var/www/certbot:ro
+{% endif %}
+      - {{ VOLUME_PREFIX }}_nginx_logs:/var/log/nginx
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    networks:
+      - {{ NETWORK_PREFIX }}_network
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 80 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+
+{% if WITH_CERTBOT %}
+  # ---- Certificate renewal ------------------------------------------------
+  # Wakes twice a day; certbot only acts when a certificate is near expiry.
+  # `deployctl ssl setup` obtains the first certificate.
+  certbot:
+    image: certbot/certbot:v5.1.0
+    container_name: {{ CONTAINER_PREFIX }}_certbot
+    restart: unless-stopped
+    volumes:
+      - ../certbot/conf:/etc/letsencrypt
+      - ../certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - {{ NETWORK_PREFIX }}_network
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.1
+
+{% endif %}
+{% if WITH_POSTGRES %}
+  # ---- Database (containerized) -------------------------------------------
+  # This volume is the only durable state on the host. Nothing replicates it —
+  # `deployctl backup run` is what stands between you and losing it.
+  postgres:
+    image: postgres:16-alpine
+    container_name: {{ CONTAINER_PREFIX }}_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: {{ POSTGRES_DB }}
+      POSTGRES_USER: {{ POSTGRES_USER }}
+      POSTGRES_PASSWORD: {{ POSTGRES_PASSWORD }}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    # Tuned for a small shared box rather than a dedicated database server.
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c max_connections=100
+      -c effective_cache_size=256MB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=4MB
+      -c random_page_cost=1.1
+      -c work_mem=4MB
+    volumes:
+      - {{ VOLUME_PREFIX }}_postgres_data:/var/lib/postgresql/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - {{ NETWORK_PREFIX }}_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ POSTGRES_USER }} -d {{ POSTGRES_DB }}"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: {{ POSTGRES_MEM_LIMIT }}
+    memswap_limit: {{ POSTGRES_MEM_LIMIT }}
+    cpus: {{ POSTGRES_CPUS }}
+
+{% endif %}
+{% if WITH_REDIS %}
+  # ---- Cache and Celery broker (containerized) ----------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: {{ CONTAINER_PREFIX }}_redis
+    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf
+    labels:
+      # Changes whenever redis.conf or the password does, so `up -d` recreates
+      # this container — Redis reads its config only at start (cli/render.py).
+      deployctl.config-hash: "{{ REDIS_CONFIG_HASH }}"
+    volumes:
+      - {{ VOLUME_PREFIX }}_redis_data:/data
+      - ../redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      # requirepass lives in its own file that redis.conf includes, so the
+      # password never shows up in `ps`. It has to be world-readable: this
+      # container runs as uid 999, which owns nothing on the host.
+      - ../redis/redis-password.conf:/usr/local/etc/redis/redis-password.conf:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks:
+      - {{ NETWORK_PREFIX }}_network
+    healthcheck:
+      # The password is read from the mounted file into REDISCLI_AUTH, so it is in
+      # no argv (`ps`), and not in this file or `docker inspect` either.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(sed -n 's/^requirepass //p' /usr/local/etc/redis/redis-password.conf)\" redis-cli ping | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: {{ REDIS_MEM_LIMIT }}
+    memswap_limit: {{ REDIS_MEM_LIMIT }}
+    cpus: 0.5
+
+{% endif %}
+  # ---- Application --------------------------------------------------------
+  api:
+    image: {{ IMAGE_REF }}
+    container_name: {{ CONTAINER_PREFIX }}_api
+    restart: unless-stopped
+    # Longer than gunicorn's --graceful-timeout, so in-flight requests finish.
+    stop_grace_period: {{ API_STOP_GRACE }}
+{% if APP_COMMAND %}
+    command: {{ APP_COMMAND }}
+{% else %}
+    command: >
+      gunicorn {{ APP_MODULE }}
+      --workers {{ API_WORKERS }}
+      --worker-class uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:{{ APP_PORT }}
+      --max-requests 1000
+      --max-requests-jitter 100
+      --timeout 90
+      --graceful-timeout 30
+      --keep-alive 5
+      --preload
+      --forwarded-allow-ips='*'
+      --access-logfile -
+      --error-logfile -
+      --log-level {{ LOG_LEVEL | lower }}
+{% endif %}
+    env_file:
+      - ../.env.{{ ENV }}
+    environment:
+      - ENVIRONMENT={{ ENV }}
+      - DEBUG=false
+      - ENABLE_DOCS={{ ENABLE_DOCS }}
+      - SERVER_ROLE={{ SERVER_ROLE }}
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - {{ VOLUME_PREFIX }}_app_logs:{{ APP_LOG_DIR }}
+{% if WITH_UPLOADS %}
+      - {{ VOLUME_PREFIX }}_uploads:{{ UPLOADS_DIR }}
+{% endif %}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    networks:
+      - {{ NETWORK_PREFIX }}_network
+{% if WITH_POSTGRES or WITH_REDIS %}
+    depends_on:
+{% if WITH_POSTGRES %}
+      postgres:
+        condition: service_healthy
+{% endif %}
+{% if WITH_REDIS %}
+      redis:
+        condition: service_healthy
+{% endif %}
+{% endif %}
+{% if HEALTHCHECK_CMD %}
+    healthcheck:
+      test: ["CMD-SHELL", "{{ HEALTHCHECK_CMD }}"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 90s
+{% endif %}
+    mem_limit: {{ API_MEM_LIMIT }}
+    memswap_limit: {{ API_MEM_LIMIT }}
+    cpus: {{ API_CPUS }}
+
+{% if CELERY_APP or WORKER_COMMAND %}
+  # ---- Background workers -------------------------------------------------
+  # Runs on every host; they all consume the same shared broker, so work is
+  # spread automatically and losing a host loses no queued jobs.
+  #
+  # WORKER_IMAGE_REF is IMAGE_REF unless the project set WORKER_BUILD_TARGET, in
+  # which case it is the `-worker` variant built from a different stage of the
+  # same Dockerfile — same commit, same tag, extra tools the api must not carry.
+  celery_worker:
+    image: {{ WORKER_IMAGE_REF }}
+    container_name: {{ CONTAINER_PREFIX }}_celery_worker
+    restart: unless-stopped
+    # Warm shutdown: stop taking jobs, finish the ones in hand, hand the rest back.
+    stop_grace_period: {{ WORKER_STOP_GRACE }}
+{% if WORKER_ENTRYPOINT %}
+    entrypoint: ["{{ WORKER_ENTRYPOINT }}"]
+{% endif %}
+{% if WORKER_COMMAND %}
+    command: {{ WORKER_COMMAND }}
+{% else %}
+    command: >
+      celery -A {{ CELERY_APP }} worker
+      --loglevel={{ LOG_LEVEL | lower }}
+      --pool=prefork
+      --concurrency={{ CELERY_WORKERS }}
+      --max-tasks-per-child=1000
+      --time-limit=3600
+      --soft-time-limit=3300
+      --queues={{ CELERY_QUEUES }}
+{% endif %}
+    env_file:
+      - ../.env.{{ ENV }}
+    environment:
+      - ENVIRONMENT={{ ENV }}
+      - DEBUG=false
+      - SERVER_ROLE={{ SERVER_ROLE }}
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - {{ VOLUME_PREFIX }}_app_logs:{{ APP_LOG_DIR }}
+{% if WITH_UPLOADS %}
+      - {{ VOLUME_PREFIX }}_uploads:{{ UPLOADS_DIR }}
+{% endif %}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    networks:
+      - {{ NETWORK_PREFIX }}_network
+{% if WITH_POSTGRES or WITH_REDIS %}
+    depends_on:
+{% if WITH_POSTGRES %}
+      postgres:
+        condition: service_healthy
+{% endif %}
+{% if WITH_REDIS %}
+      redis:
+        condition: service_healthy
+{% endif %}
+{% endif %}
+{% if CELERY_APP and not WORKER_COMMAND %}
+    # Without this the worker runs the image's own HEALTHCHECK, which is the
+    # api's (curl :8000/health) inherited by every later Dockerfile stage — and
+    # nothing listens on 8000 in a worker, so it reports "unhealthy" forever.
+    # Ask Celery instead: a broker round-trip to THIS container's worker
+    # (celery@<hostname>, the default node name), so on a cluster another host's
+    # worker cannot answer for it. It imports the app — ~100 MB for a few
+    # seconds — which is why it runs once a minute, and why WORKER_MEM_LIMIT
+    # needs that much headroom above the pool's own use.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A {{ CELERY_APP }} inspect ping -d \"celery@$$HOSTNAME\" --timeout 10"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+{% endif %}
+    mem_limit: {{ WORKER_MEM_LIMIT }}
+    memswap_limit: {{ WORKER_MEM_LIMIT }}
+    cpus: {{ WORKER_CPUS }}
+
+{% endif %}
+{% if WITH_BEAT and IS_PRIMARY %}
+  # ---- Scheduler ----------------------------------------------------------
+  # PRIMARY HOST ONLY. Beat is a singleton: a second one fires every scheduled
+  # job twice (double emails, double billing runs). This block is absent from the
+  # secondary compose file, which is how that is enforced.
+  celery_beat:
+    image: {{ WORKER_IMAGE_REF }}
+    container_name: {{ CONTAINER_PREFIX }}_celery_beat
+    restart: unless-stopped
+{% if WORKER_ENTRYPOINT %}
+    entrypoint: ["{{ WORKER_ENTRYPOINT }}"]
+{% endif %}
+{% if BEAT_COMMAND %}
+    command: {{ BEAT_COMMAND }}
+{% else %}
+    command: >
+      celery -A {{ CELERY_APP }} beat
+      --loglevel={{ LOG_LEVEL | lower }}
+      --pidfile=/tmp/celerybeat.pid
+      --schedule=/tmp/celerybeat-schedule
+{% endif %}
+    env_file:
+      - ../.env.{{ ENV }}
+    environment:
+      - ENVIRONMENT={{ ENV }}
+      - DEBUG=false
+      - SERVER_ROLE={{ SERVER_ROLE }}
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - {{ VOLUME_PREFIX }}_beat_data:/tmp
+      - {{ VOLUME_PREFIX }}_app_logs:{{ APP_LOG_DIR }}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks:
+      - {{ NETWORK_PREFIX }}_network
+{% if WITH_REDIS %}
+    depends_on:
+      redis:
+        condition: service_healthy
+{% endif %}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat.pid && kill -0 $(cat /tmp/celerybeat.pid) || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.2
+
+{% endif %}
+networks:
+  {{ NETWORK_PREFIX }}_network:
+    driver: bridge
+    name: {{ NETWORK_PREFIX }}_network
+    ipam:
+      config:
+        - subnet: {{ NETWORK_SUBNET }}
+
+volumes:
+  {{ VOLUME_PREFIX }}_nginx_logs:
+    driver: local
+    name: {{ VOLUME_PREFIX }}_nginx_logs
+  {{ VOLUME_PREFIX }}_app_logs:
+    driver: local
+    name: {{ VOLUME_PREFIX }}_app_logs
+{% if WITH_UPLOADS %}
+  {{ VOLUME_PREFIX }}_uploads:
+    driver: local
+    name: {{ VOLUME_PREFIX }}_uploads
+{% endif %}
+{% if WITH_POSTGRES %}
+  {{ VOLUME_PREFIX }}_postgres_data:
+    driver: local
+    name: {{ VOLUME_PREFIX }}_postgres_data
+{% endif %}
+{% if WITH_REDIS %}
+  {{ VOLUME_PREFIX }}_redis_data:
+    driver: local
+    name: {{ VOLUME_PREFIX }}_redis_data
+{% endif %}
+{% if WITH_BEAT and IS_PRIMARY %}
+  {{ VOLUME_PREFIX }}_beat_data:
+    driver: local
+    name: {{ VOLUME_PREFIX }}_beat_data
+{% endif %}
