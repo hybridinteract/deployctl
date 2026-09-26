@@ -10,7 +10,7 @@ say so rather than forking the tool.
 ## 1. Install, then initialise the repository
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.9.0      # once per machine
+uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0      # once per machine
 cd /path/to/new-project
 deployctl init --mode single --env production
 ```
@@ -35,8 +35,18 @@ deployctl adopt --apply    # project/, config/, generated/ → deploy/; the copy
 ```
 
 It refuses if the copied code has uncommitted edits (they would be lost with it) and never
-deletes an untracked file. Afterwards, update any workflow that ran `./deployctl/deployctl`
-to run the installed `deployctl`.
+deletes an untracked file. Then bring the rest up to the installed version:
+
+```bash
+deployctl migrate-config                             # prints the plan: IMAGE_TAG out of config/
+deployctl migrate-config --apply                     # every environment's files
+deployctl ci init --env production --force           # workflows that install this version
+deployctl ci doctor --env production                 # what else CI/CD still needs
+```
+
+`ci init --force` regenerates only the two workflows deployctl manages (`build-image.yml`,
+`deploy.yml`), after showing the diff; your `ci.yml` is yours and is left alone. If it ran
+`./deployctl/deployctl`, point it at the installed `deployctl`.
 
 ---
 
@@ -237,15 +247,15 @@ Adding a field is a change to this file only. No Python.
 
 ```bash
 deployctl selftest                          # every shape renders and parses
-deployctl setup    --env production
+deployctl setup    --env production --tag <tag>   # a tag CI published
 deployctl validate --env production
 ```
 
 `validate` reports configuration problems and artifact problems together, with the fix for
-each. Then, and only then:
+each. Then, and only then, reach for the servers:
 
 ```bash
-deployctl doctor --env production
+deployctl deploy doctor --env production --tag <tag>
 ```
 
 ---
@@ -286,9 +296,14 @@ deploy, restore.
 uv tool install --force git+ssh://git@github.com/hybridinteract/deployctl@<new-tag>
 deployctl selftest
 deployctl validate --env <env>
-deployctl deploy update --env <env> --dry-run
+deployctl deploy update --env <env> --tag <running-tag> --dry-run
+deployctl ci init --env <env> --force      # CI installs the new version too
 ```
 
 Your `deploy/` directory is untouched by an upgrade — that split is the whole point. If
 `validate` reports a new required field, the upgrade added a capability; the message says
 what to set. Read the CHANGELOG for anything that needs a step from you.
+
+**CI runs the version its workflow pins**, not the one on your machine: until `ci init
+--force` regenerates `deploy.yml` (and you merge it), merges keep deploying with the old
+one. `ci doctor` flags workflows from an older version.

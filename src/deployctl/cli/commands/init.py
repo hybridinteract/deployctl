@@ -24,21 +24,30 @@ def init(
 
     ui.header(f"Initialize deployctl ({mode}, env '{env}')")
 
+    # Paths as seen from the repository root, where these commands are typed.
+    def shown(path):
+        return path.relative_to(paths.REPO_ROOT)
+
     written = scaffold.scaffold(env, mode)
     if written:
         for path in written:
-            ui.ok(f"created {path.relative_to(paths.ROOT)}")
+            ui.ok(f"created {shown(path)}")
     else:
         ui.info("nothing to create — every stub already exists")
 
     ui.separator()
     ui.info("Next steps:")
-    print(f"  1. Fill in  {paths.COMMON_CONFIG.relative_to(paths.ROOT)}  (project name, domain, image repo)")
-    print(f"  2. Fill in  {paths.config_file(env).relative_to(paths.ROOT)}  (hosts, database, TLS)")
-    print(f"  3. Point    {paths.PROJECT_CONFIG.relative_to(paths.ROOT)}  at your app (module, health path, migrate command)")
-    print("  4. Publish an image:   deployctl ci init      (GitHub Actions)")
-    print("                    or   deployctl image push   (build from this machine)")
-    print(f"  5. Generate + check:   deployctl setup --env {env} && deployctl validate --env {env}")
-    print(f"  6. Deploy:             deployctl doctor --env {env} && deployctl deploy init --env {env}")
+    print(f"  1. Fill in  {shown(paths.COMMON_CONFIG)}  (project name, domain, image repo)")
+    print(f"  2. Fill in  {shown(paths.config_file(env))}  (hosts, database, TLS)")
+    print(f"  3. Point    {shown(paths.PROJECT_CONFIG)}  at your app (module, health path, migrate command)")
+    print(f"  4. Build the image in CI:  deployctl ci init --env {env}   then commit, push, and note")
+    print("     the tag the run publishes (a short commit SHA)")
+    print("  5. The rest in the panel — deployctl webui — whose Setup tab prepares the server and")
+    print("     does the first deploy, and whose CI/CD tab makes every merge deploy. Or by hand:")
+    print(f"       deployctl server bootstrap-script --env {env} | ssh root@<server-ip> 'bash -s'")
+    print(f"       deployctl setup --env {env} --tag <tag> && deployctl validate --env {env}")
+    print(f"       deployctl deploy doctor --env {env} --tag <tag>")
+    print(f"       deployctl deploy init --env {env} --tag <tag>")
     print()
-    ui.info("Full walkthrough: deployctl/docs/10-SINGLE-SERVER.md or 20-CLUSTER.md")
+    ui.info(f"Guides: https://github.com/hybridinteract/deployctl/tree/main/docs "
+            f"(05-QUICKSTART, then {'20-CLUSTER' if mode == 'cluster' else '10-SINGLE-SERVER'})")

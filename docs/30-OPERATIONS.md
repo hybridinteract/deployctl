@@ -48,7 +48,7 @@ deployctl image tags                          # what is in the registry
 # 2-4. checks — none of these change a running deployment
 deployctl setup    --env <env> --tag <tag> --force   # re-render generated/ with that tag
 deployctl validate --env <env>                # lint the config and the artifacts
-deployctl doctor   --env <env>                # every host: ssh, docker, dir, image, arch
+deployctl deploy doctor --env <env> --tag <tag>   # every host: ssh, docker, dir, image, arch
 
 # 5. the release itself
 deployctl deploy update --env <env> --tag <tag>   # rolling, health-gated, reverted on failure
@@ -116,15 +116,27 @@ behind — there is no "forgot to run setup" failure mode.
 
 ## Rolling back
 
+Through GitHub, the everyday way (the panel's **Operate → Roll back**, or **Releases →
+Roll back to this**):
+
 ```bash
-deployctl deploy history  --env <env>        # what has been deployed from here
-deployctl deploy rollback --env <env>        # the previous tag
+deployctl ci deploy --env <env> --rollback                 # the release before the running one
+deployctl ci deploy --env <env> --rollback --tag fb31c25   # a specific one
+```
+
+From this machine, when GitHub is the problem:
+
+```bash
+deployctl deploy history  --env <env>        # every release, from the history on the primary
+deployctl deploy rollback --env <env>        # the release before the running one
 deployctl deploy rollback --env <env> --to fb31c25
 ```
 
-Rollback re-rolls a previous **image tag** with the same health-gated process, then pins
-that tag in `config/<env>.env` so the next routine deploy does not silently re-deploy the
-bad build.
+Rollback re-rolls a previous **image tag** with the same health-gated process and records
+it on the hosts. Nothing is written into `config/`: the next deploy without `--tag`
+redeploys what the hosts run — the rolled-back tag — and the next merge ships a new one.
+"The previous release" comes from the history on the primary, so a laptop and CI agree on
+it; a rollback is never counted as a release, so rolling back twice steps back twice.
 
 **Nothing is migrated, and nothing is reverted.** The older image cannot run its own
 migrations against a database that is already past them — `alembic upgrade head` answers

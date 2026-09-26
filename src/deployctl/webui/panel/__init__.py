@@ -1,5 +1,6 @@
 """
-deployctl control panel — a localhost-only FastAPI + HTMX UI over the deployctl CLI.
+deployctl control panel — a localhost-only FastAPI UI (plain JavaScript, no framework)
+over the deployctl CLI.
 
 It imports the CLI's own modules (``deployctl.cli.config``, ``.fields``, ``.envfile``,
 ``.registry``) instead of re-implementing them, and it shells out to the same

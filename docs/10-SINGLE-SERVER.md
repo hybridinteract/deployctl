@@ -15,73 +15,18 @@ horizontal scale. Read **[00-CONCEPTS.md](00-CONCEPTS.md)** first if you have no
   2 GB works if the database is small and you keep the worker counts at 1–2.
 - A domain you control, with DNS you can edit.
 - A container registry — GitHub Container Registry if the code is on GitHub.
-- Docker on your own machine only if you plan to use `deployctl image push`.
+- The code on GitHub, for CI to build the image and deploy it. (Docker on your own
+  machine only if you build there instead, with `deployctl image push`.)
 
 ---
 
-## 1. Bootstrap the host (once, by hand)
-
-This is the only thing you do manually on the server. Everything after it happens over
-ssh from your machine.
-
-```bash
-ssh root@<server-ip>
-
-# 1. Docker, with the compose plugin
-curl -fsSL https://get.docker.com | sh
-
-# 2. An unprivileged deploy user in the docker group, with your key
-adduser --disabled-password --gecos "" deploy
-usermod -aG docker deploy
-mkdir -p /home/deploy/.ssh && cp /root/.ssh/authorized_keys /home/deploy/.ssh/
-chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh
-chmod 600 /home/deploy/.ssh/authorized_keys
-
-# 3. The deploy directory (this becomes REMOTE_DIR)
-mkdir -p /opt/myapp && chown deploy:deploy /opt/myapp
-
-# 4. Swap — a small box running a database plus a container pull will thank you
-fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-echo '/swapfile none swap sw 0 0' >> /etc/fstab
-
-# 5. Recommended
-apt-get update && apt-get upgrade -y
-apt-get install -y unattended-upgrades fail2ban
-systemctl enable --now unattended-upgrades fail2ban
-```
-
-Leave the server on **UTC** (the default). Scheduled jobs are expressed in UTC; changing
-the system timezone silently shifts every one of them.
-
-Firewall: allow `22` from your IP, `80` and `443` from anywhere. Port 80 must stay open —
-certbot needs it for renewals, not just the first issuance.
-
-Verify from your machine — this is exactly what `doctor` checks:
-
-```bash
-ssh deploy@<server-ip> docker ps    # must work with no password and no sudo
-```
-
----
-
-## 2. DNS
-
-```
-A    api.example.com    →    <server-ip>
-```
-
-Certificate issuance fails until this resolves, so do it now and let it propagate while
-you set up the rest.
-
----
-
-## 3. Configure
+## 1. Configure
 
 ```bash
 deployctl init --mode single --env production
 ```
 
-Fill in the three files it creates. `config/common.env`:
+It creates `deploy/` in your repository. Fill in the three files. `deploy/config/common.env`:
 
 ```sh
 PROJECT_NAME=myapp
@@ -91,7 +36,7 @@ REGISTRY_USER=your-github-user
 REGISTRY_TOKEN=ghp_…            # classic PAT, read:packages only
 ```
 
-`config/production.env`:
+`deploy/config/production.env`:
 
 ```sh
 MODE=single
@@ -109,60 +54,105 @@ CELERY_WORKERS=2
 ```
 
 You do not set database passwords: container mode generates them into
-`config/secrets.production.env` and reuses them forever.
+`deploy/config/secrets.production.env` and reuses them forever. `config/` is gitignored:
+back it up somewhere safe.
 
-`project/project.env` describes your app — see
+`deploy/project/project.env` describes your app — see
 **[40-ADOPTING-A-NEW-PROJECT.md](40-ADOPTING-A-NEW-PROJECT.md)** for each field.
+
+---
+
+## 2. Bootstrap the host (once, as root)
+
+This is the only step that needs root, and it is one script. Everything after it happens
+over ssh as an unprivileged user — from your machine, and later from CI.
+
+The script is rendered from the configuration you just wrote — the deploy user and
+`REMOTE_DIR` in it are yours. From your machine:
+
+```bash
+deployctl server bootstrap-script --env production | ssh root@<server-ip> 'bash -s'
+```
+
+Or paste its output into the server's *user data* when you create it (DigitalOcean:
+"Add Initialization scripts"), and it runs on first boot. Either way it installs Docker with
+the compose plugin, creates the `deploy` user in the `docker` group with root's authorised
+keys, the deploy directory owned by it, a swap file, unattended upgrades and fail2ban, and
+turns ssh password logins off. It is safe to run again; each step checks first. It reboots
+at the end when the kernel was upgraded — `--no-reboot` if that server is already serving.
+
+It also sets the server to **UTC**. Leave it there: scheduled jobs are expressed in UTC,
+and a different system timezone silently shifts every one of them.
+
+Firewall: `80` and `443` from anywhere — port 80 must stay open, certbot needs it for
+renewals, not just the first issuance. Port `22` must accept **CI as well as you**, and
+GitHub's runners have no fixed addresses: leave it open with key-only logins (the script
+already turned passwords off), or close it to the internet and reach the host over a
+tailnet or a jump host — [35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md#reaching-the-hosts).
+
+Verify from your machine — the first thing `deploy doctor` checks:
+
+```bash
+ssh deploy@<server-ip> docker ps    # must work with no password and no sudo
+```
+
+---
+
+## 3. DNS
+
+```
+A    api.example.com    →    <server-ip>
+```
+
+Certificate issuance fails until this resolves, so do it now and let it propagate while
+you set up the rest.
 
 ---
 
 ## 4. Publish an image
 
-Either let CI do it (recommended — an image built from a known commit, every time):
+CI builds it — an image from a known commit, every time:
 
 ```bash
-deployctl ci init --branch main
-# then, in GitHub: Settings → Actions → General → Workflow permissions
-#                  → "Read and write permissions" → Save
-git add .github/workflows/build-image.yml && git commit -m "Add image build" && git push
+deployctl ci init --env production --branch main
+git add .github/workflows && git commit -m "Build and deploy with deployctl" && git push
 ```
 
-The run's Summary prints the tag. Or build from your machine:
+Once, in GitHub: Settings → Actions → General → Workflow permissions → "Read and write
+permissions" → Save, or the push fails with `denied: permission_denied`. The run's Summary
+prints the tag it published — a short commit SHA such as `fb31c25`. That tag is what you
+deploy; nothing writes it into your configuration.
 
-```bash
-deployctl image push          # tags with the current git short SHA, pins it for you
-```
-
-Then name that tag on the first deploy — the hosts run nothing yet, so there is no running
-tag to default to. Every later deploy defaults to the tag the primary runs:
-
-```sh
-deployctl deploy init --env production --tag fb31c25
-```
+(No CI? `deployctl image push` builds and pushes from this machine and prints the tag.)
 
 ---
 
-## 5. Render, check, deploy
+## 5. Render, check, deploy — the first time
+
+The hosts run nothing yet, so the first deploy names its tag. After this one, a deploy
+without `--tag` redeploys whatever the host runs.
 
 ```bash
-deployctl setup    --env production
-deployctl validate --env production
-deployctl doctor   --env production      # ssh, docker, permissions, image, architecture
-deployctl deploy init --env production
+deployctl setup    --env production --tag fb31c25   # render deploy/generated/
+deployctl validate --env production                 # config + rendered files
+deployctl deploy doctor --env production --tag fb31c25   # ssh, docker, permissions, image, architecture
+deployctl deploy init   --env production --tag fb31c25
 ```
 
-If `doctor` reports a permission problem, `--fix` repairs what it can — file modes here and
-on the host. Anything needing root it prints as a command for you to run, rather than giving
-the deploy user a way to become root:
+The panel does the same from **Setup → First deploy** (`deployctl webui`).
+
+If `deploy doctor` reports a permission problem, `--fix` repairs what it can — file modes
+here and on the host. Anything needing root it prints as a command for you to run, rather
+than giving the deploy user a way to become root:
 
 ```bash
-deployctl deploy doctor --env production --fix
+deployctl deploy doctor --env production --tag fb31c25 --fix
 ```
 
-`deploy init` pushes artifacts, pulls the image, runs migrations once, starts the stack
-and waits for health. It also creates a **1-day self-signed certificate** so nginx can
-start at all — without a certificate file the 443 block cannot load, and without nginx on
-port 80 there is no way to answer the ACME challenge. Which is the next step:
+`deploy init` pushes the rendered files, pulls the image, runs migrations once, starts the
+stack and waits for health. It also creates a **1-day self-signed certificate** so nginx
+can start at all — without a certificate file the 443 block cannot load, and without nginx
+on port 80 there is no way to answer the ACME challenge. Which is the next step:
 
 ```bash
 deployctl ssl setup --env production --staging   # rehearsal: no rate limit
@@ -181,19 +171,40 @@ deployctl deploy status --env production
 
 ---
 
-## 6. Set up backups before you need them
+## 6. Deploy on every merge
+
+From here on a release is a merge to `main`: CI checks it, builds the image and deploys
+it with the same engine, health gate and revert as the commands above. Each step is one
+command — or one button on the panel's **CI/CD** tab:
+
+```bash
+deployctl ci connect     --env production   # where GitHub keeps the secrets (your plan decides)
+deployctl ci setup-key   --env production   # a CI-only ssh key, on the host and in GitHub
+deployctl ci pin-hosts   --env production   # the host key CI must see
+deployctl ci sync-config --env production   # your deploy/config/, as one GitHub secret
+deployctl ci doctor      --env production   # everything above, checked
+deployctl ci deploy      --env production   # prove it: redeploy what runs, through GitHub
+deployctl ci auto-deploy on --env production
+```
+
+Why each step, and what to do when GitHub is the thing that is broken:
+**[35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md)**.
+
+---
+
+## 7. Set up backups before you need them
 
 The Postgres volume on this host is the only copy of your data.
 
 ```bash
-deployctl backup run --env production     # dump, prune old ones, fetch a local copy
+deployctl backup run --env production     # dump, prune old ones, fetch a copy to ~/.deployctl/backups/
 deployctl backup list --env production
 ```
 
 Schedule it from your machine or a CI schedule — for example, daily at 02:00:
 
 ```cron
-0 2 * * * cd /path/to/repo/deployctl && deployctl backup run --env production >> /tmp/backup.log 2>&1
+0 2 * * * cd /path/to/your-repo && deployctl backup run --env production >> /tmp/backup.log 2>&1
 ```
 
 Then actually verify a dump restores, into a scratch database rather than the live one:
@@ -206,17 +217,19 @@ An unverified backup is a hypothesis, not a backup.
 
 ---
 
-## 7. Day two
+## 8. Day two
 
-```bash
-# deploy a new build
-deployctl image tags                                  # what is available
-deployctl deploy update --env production --tag <tag>  # or through GitHub: deployctl ci deploy --tag <tag>
-
-# something wrong
-deployctl deploy rollback --env production
-deployctl deploy logs --env production
-```
+- **Ship:** merge to `main`.
+- **See what runs, and who shipped it:** the panel's **Operate** tab, or
+  `deployctl deploy status --env production` and `deployctl deploy history --env production`.
+- **Roll back:** `deployctl ci deploy --env production --rollback` — the release before the
+  running one, through GitHub. `--tag <tag>` for a specific one.
+- **Change a setting:** edit `deploy/config/`, then `deployctl ci sync-config --env production`
+  and `deployctl ci deploy --env production --allow-config-change` — or Save → **Apply a
+  config change** in the panel.
+- **GitHub down:** `deployctl deploy update --env production --tag <tag>` from this machine
+  — same engine, same lock.
+- **Logs:** `deployctl deploy logs --env production`.
 
 Watch a release, in another terminal:
 

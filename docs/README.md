@@ -24,14 +24,15 @@ and its stepper names the next step until the environment deploys on every merge
 **First deployment** — once per environment:
 
 ```bash
-deployctl init --mode single --env production   # or --mode cluster
-$EDITOR config/common.env config/production.env project/project.env
-deployctl ci init                               # publish images from CI
-deployctl setup    --env production --force
+deployctl init --mode single --env production   # or --mode cluster; creates deploy/
+$EDITOR deploy/config/common.env deploy/config/production.env deploy/project/project.env
+deployctl ci init --env production              # publish images from CI; push → its tag
+deployctl server bootstrap-script --env production | ssh root@<server-ip> 'bash -s'   # new server only
+deployctl setup    --env production --tag <tag> --force
 deployctl validate --env production
-deployctl doctor   --env production
-deployctl deploy init --env production --tag <tag>
-deployctl ssl setup   --env production          # single-server TLS only
+deployctl deploy doctor --env production --tag <tag>
+deployctl deploy init   --env production --tag <tag>
+deployctl ssl setup     --env production          # single-server TLS only
 ```
 
 **Every release after that** — merge, with CI/CD set up

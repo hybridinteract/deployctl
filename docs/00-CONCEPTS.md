@@ -9,21 +9,24 @@ once; the per-shape guides then make sense without re-explaining themselves.
 
 ```
   ┌─────────────────┐        ┌──────────────┐        ┌─────────────────┐
-  │  build machine  │ ─push─▶│   registry   │◀─pull──│   host(s)       │
-  │  CI, or yours   │        │   ghcr.io    │        │  Docker only    │
-  └─────────────────┘        └──────────────┘        └────────▲────────┘
-                                                              │ ssh + rsync
-                                                    ┌─────────┴────────┐
-                                                    │ control machine  │
-                                                    │ your laptop      │
-                                                    │ deployctl        │
-                                                    └──────────────────┘
+  │  build job      │ ─push─▶│   registry   │◀─pull──│   host(s)       │
+  │  GitHub Actions │        │   ghcr.io    │        │  Docker only    │
+  └────────┬────────┘        └──────────────┘        └────────▲────────┘
+           │ the tag it pushed                                │ ssh + rsync
+           ▼                                        ┌─────────┴────────┐
+  ┌─────────────────┐                               │ control machine  │
+  │  deploy job     │ ─ runs deployctl, which is ─▶ │ CI's deploy job  │
+  │  GitHub Actions │                               │ — or your laptop │
+  └─────────────────┘                               └──────────────────┘
 ```
 
-- **The registry is a neutral handoff point.** CI never touches your servers; servers
-  never see your source. Neither needs credentials for the other.
-- **The control machine orchestrates.** No agent runs on a host. Deploying is your
-  laptop (or a bastion) driving ssh with your own keys.
+- **The registry is a neutral handoff point.** The build never touches your servers;
+  servers never see your source. What passes from build to deploy is one immutable tag,
+  the commit's short SHA.
+- **The control machine orchestrates, and it is usually CI.** No agent runs on a host. A
+  deploy is deployctl driving ssh: on every merge, in GitHub Actions' deploy job with a
+  CI-only key; by hand, from your laptop with your own keys. Same engine, and one lock on
+  the primary, so the two never interleave.
 - **Hosts are boring.** Docker, an unprivileged user in the `docker` group, and a
   writable directory. That is the entire requirement.
 
@@ -140,16 +143,20 @@ Everything else — nginx, api, workers — runs on every host.
      rsync artifacts → docker login → docker compose pull
      docker compose up -d → reload nginx → wait for health
      → watch EVERY service for DEPLOY_SETTLE_SECONDS: no restarts, never unhealthy
-     ↑ any failure: put the previous release back on this host, stop the roll
-5. record the deployed tag on each host
+     ↑ any failure: put the previous release back on this host AND on every host
+       already rolled, newest first; stop
+5. record the deployed tag and who deployed it on each host, and the release in the
+   history on the primary
 ```
 
 Three things make it safe. The **health gate** stops a bad release after the first host,
 and with a load balancer the others keep serving the previous one. The **service watch**
 catches what the gate cannot see — it probes the api only, so a worker that crash-loops
-would otherwise pass. And the **automatic revert** means a single server is not left on a
-release that failed: its previous compose file, `.env` and nginx config are restored and
-started again, from the image already on the host. Migrations are not reverted — the older
+would otherwise pass. And the **automatic revert** means no server is left on a
+release that failed, and the fleet is never left split between two: the host that failed
+and every host the run already moved get their previous compose file, `.env` and nginx
+config back, started again from the image already on the host (`REVERT_SCOPE=fleet`, the
+default; `host` reverts only the one that failed). Migrations are not reverted — the older
 code runs on the newer schema, the same contract as a rollback. `DEPLOYCTL_NO_REVERT=1`
 leaves a failed release in place for inspection.
 
@@ -205,6 +212,10 @@ artifact syncs, so `rsync --delete` can never remove them:
 | `$REMOTE_DIR/certbot/` | Let's Encrypt certificates and the ACME webroot |
 | `$REMOTE_DIR/nginx/auth/.htpasswd` | who may see `/docs` (operator-managed) |
 | `$REMOTE_DIR/backups/` | database dumps |
+| `$REMOTE_DIR/.deployctl-state` | the tag this host runs, when, and who deployed it — what `deploy update` without `--tag` redeploys |
+| `$REMOTE_DIR/.deployctl-history` | on the primary: every release, rollback and first bring-up — what `deploy rollback` reads |
+| `$REMOTE_DIR/.previous/` | the release before the running one, set aside for the automatic revert |
+| `$REMOTE_DIR/.deployctl.lock` | while a deploy runs: who holds the environment (a laptop, or an Actions run) |
 | Docker volumes | container Postgres/Redis data, logs |
 
 Everything else under `$REMOTE_DIR` is disposable and rebuilt by `setup`.
@@ -224,7 +235,7 @@ whichever rendered last quietly overwrite the other's.
 |---|---|
 | A secondary host dies | The LB routes around it; capacity drops until you replace it. |
 | The primary dies | Web traffic is fine; **scheduled jobs pause** until it returns. Workers elsewhere keep draining the queue. |
-| A bad release | The health gate or the service watch fails it; that host is reverted to its previous release and the roll stops. Hosts rolled before it stay on the new tag — `deploy rollback` returns them. |
+| A bad release | The health gate or the service watch fails it; that host and every host already rolled are reverted to the previous release, and the run fails. The fleet stays on one release. |
 | Managed database blip | The provider's problem; the app reconnects. |
 | Single-server host dies | Everything is down, including the database. Your backups are the recovery plan — which is why `backup run` should be scheduled, not remembered. |
 
