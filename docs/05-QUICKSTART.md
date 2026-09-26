@@ -9,8 +9,8 @@ optional and nothing here is ambiguous — run the blocks in order, top to botto
 >
 > 1. **A server** you can `ssh` into, with **Docker** installed and a **deploy user** that
 >    can run `docker` without `sudo`. → Don't have one? Do
->    [Part A and Part B of the Tutorial tab](#step-5--open-the-control-panel) first; it
->    takes about ten minutes and covers provisioning and bootstrapping the host.
+>    the panel's **Setup → Prepare the server** (or `deployctl server bootstrap-script`) first;
+>    it takes about ten minutes on a fresh Ubuntu server.
 > 2. **A container image in a registry.** → Don't have one? Step 4 creates the CI workflow
 >    that builds it.
 
@@ -83,50 +83,42 @@ Ctrl+C stops it. If the port is taken: `--stop` ends the old one, `--restart` re
 
 # In the browser
 
-## Configure
+The panel opens on **Setup** and the stepper under the top bar — Server → First deploy →
+CI/CD → Live — always names the next step.
 
-Fill in the sections and press **Save**. The form adapts to the environment's shape:
-single-server shows TLS and containerized-database settings, a cluster shows the host list
-with a "primary" selector. Required fields are marked `*`; help text sits under each input.
+## Setup
 
-Saving writes the same `config/*.env` files the CLI reads — there is no hidden state.
-
-**Set the image tag:** in *Application image*, press **fetch tags from the registry**,
-click the newest, then **Save**.
-
-## Deploy
-
-Open the **Deploy** tab and follow the **First deployment** rail left to right. Each card
-shows the exact command it runs and what it changes:
+1. **Prepare the server** — the root script for this environment, and the one line that
+   runs it on each new server. Skip it for a server you already bootstrapped.
+2. **Finish the configuration** — lists what still blocks a deploy; **Open Configure**,
+   fill in the sections and press **Save**. The form adapts to the environment's shape;
+   Save writes the same `config/*.env` files the CLI reads.
+3. **First deploy** — type the tag CI published (or pick it from **Recent tags from the
+   registry**), then work the rail left to right:
 
 ```
-1 Fill in config → 2 Regenerate → 3 Validate → 4 Doctor → 5 Init → 6 SSL: obtain → 7 Status
-      (you edit)      (local)       (local)      (reads)    (deploys)   (single only)
+1 Regenerate → 2 Validate → 3 Doctor → 4 Init → 5 SSL: obtain → 6 Status
+   (local)       (local)     (reads)   (deploys)  (single only)
 ```
 
-Steps 2–4 change nothing on a server; step 5 is the first one that does. **Do not skip
+Steps 1–3 change nothing on a server; Init is the first one that does. **Do not skip
 Doctor** — it is what catches an unreachable host or an unpullable image *before* anything
-is torn down.
+starts. **SSL: obtain** appears only for a single-server Let's Encrypt environment.
 
-Step 6 (**SSL: obtain**) appears only for a single-server Let's Encrypt environment. Until
-you run it the site serves a self-signed placeholder certificate. Cluster deployments
-terminate TLS at the load balancer, so the step is not shown there.
+## CI/CD
 
-That is a complete first deployment.
+Work down the checklist — each row has the button that fixes it: Connect GitHub, Generate
+workflows (then commit and push them), Create the CI key, Pin host keys, Sync config. Then
+**Redeploy what's running** once, to prove it, and turn automatic deploys on. Details:
+[35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md).
 
 ## Afterwards, day to day
 
-Two clicks. Follow the **Roll out a new version** rail — it is the first thing on the
-Deploy tab and marked *everyday*:
-
-```
-1 Set image tag → 2 Regenerate → 3 Validate → 4 Doctor → 5 Update → 6 Status
-   (you edit)        (local)       (local)      (reads)   (rolling)
-```
-
-On a routine release, **`IMAGE_TAG` is the only value that changes.** Full detail on what
-to edit and why the order is what it is:
-[30-OPERATIONS.md § Rolling out an update](30-OPERATIONS.md#rolling-out-an-update).
+**Merge to the deploy branch** — that is the release. The panel opens on **Operate**: what
+runs and who shipped it, **Deploy a version** / **Roll back** through GitHub, the release
+history with **Roll back to this**, and **Apply a config change** (Save → Sync config →
+Deploy the change). Deploying from this machine is still there, folded under
+**Emergency**, for when GitHub is the thing that is broken.
 
 ---
 
@@ -174,6 +166,4 @@ run, without touching a host.
 | Doctor fails on permissions | `deployctl deploy doctor --fix` repairs what does not need root; anything else is printed as an exact command to run on the host. |
 | Health gate times out after a deploy | `deployctl deploy logs --host <host>`. The gate prints the last HTTP status and what it usually means. |
 
-Full troubleshooting: [30-OPERATIONS.md § When it breaks](30-OPERATIONS.md), or the
-**Tutorial** tab's "When it breaks" section, which is the same material with your values
-substituted in.
+Full troubleshooting: [30-OPERATIONS.md § Troubleshooting](30-OPERATIONS.md#troubleshooting).

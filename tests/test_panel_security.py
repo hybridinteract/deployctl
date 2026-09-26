@@ -48,7 +48,7 @@ class TestTokenScope:
 
     @pytest.mark.parametrize("path", [
         "/run/update", "/run/stop", "/config", "/logs/10.0.0.1",
-        "/status", "/image-tags", "/config/preview",
+        "/live/bar", "/live/checklist", "/image-tags", "/config/preview", "/config/problems",
         "/open-terminal/local", "/open-terminal/ssh/10.0.0.1",
         "/jobs", "/jobs/20260923-101500-abc123/stream", "/jobs/20260923-101500-abc123/cancel",
     ])

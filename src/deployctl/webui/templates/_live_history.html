@@ -1,0 +1,30 @@
+{#- Releases from the primary's history, newest first. "Roll back to this" runs
+    ci-rollback-to with the row's tag — a hidden input the button reads, like any
+    other param, and the server checks the same way. -#}
+{% from "_macros.html" import action_button %}
+{% set kinds = {'deploy': 'release', 'init': 'first bring-up', 'rollback': 'rollback'} %}
+{% if not history.ok %}
+<p class="callout warn">Could not read the history: {{ history.error }}</p>
+{% elif not rows %}
+<p class="hint">No releases recorded on the primary yet.</p>
+{% else %}
+<table class="releases">
+  <thead><tr><th>when</th><th>tag</th><th>what</th><th>who</th><th></th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr class="{{ 'is-running' if r.running else '' }}">
+      <td title="{{ r.at }}">{{ r.ago or r.at }}</td>
+      <td><span class="mono">{{ r.tag }}</span>{% if r.running %} <span class="tag-badge running">running</span>{% endif %}</td>
+      <td>{{ kinds.get(r.kind, 'one host: ' ~ r.kind[5:] if r.kind.startswith('host:') else r.kind) }}</td>
+      <td>{% if r.who.url %}<a href="{{ r.who.url }}" target="_blank" rel="noopener noreferrer">{{ r.who.label }}</a>{% else %}{{ r.who.label }}{% endif %}</td>
+      <td data-param-scope>
+        {% if r.roll_back and row_action.id in usable %}
+        <input type="hidden" name="tag" value="{{ r.tag }}">
+        {{ action_button(row_action, env, quiet=True) }}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

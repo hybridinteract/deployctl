@@ -1,0 +1,42 @@
+{#-
+  CI/CD — once per repository. The checklist is `deployctl ci doctor`: each row
+  says what is missing, and carries the one button that fixes it. The few things
+  only a person can do on GitHub are said here, once, because no command can.
+-#}
+{% from "_macros.html" import grid %}
+<section class="pane{% if landing == 'cicd' %} active{% endif %}" id="pane-cicd" role="tabpanel" aria-labelledby="tab-cicd">
+
+  <section class="group">
+    <header class="group-head">
+      <h2>Continuous deployment</h2>
+      <p>A merge to <code>{{ local.branch }}</code> builds the image and — once automatic deploys are on —
+        deploys it: deployctl itself, run in GitHub Actions with a CI-only key, pinned host keys and a copy
+        of this machine's config. Work down the list; each row re-checks after its button runs.</p>
+    </header>
+    <div data-live="checklist"><span class="hint">asking GitHub…</span></div>
+  </section>
+
+  <section class="group">
+    <header class="group-head">
+      <h2>Only you can do these, once, on GitHub</h2>
+    </header>
+    <ul class="notes">
+      <li><b>Workflow permissions:</b> Settings → Actions → General → "Read and write permissions",
+        or the image push fails with <code>denied: permission_denied</code>.</li>
+      <li><b>While deployctl's repository is private:</b> a fine-grained token with <i>Contents: read</i>
+        on it, stored as the secret <code>DEPLOYCTL_INSTALL_TOKEN</code>. The checklist says when it is missing.</li>
+      <li><b>After Generate workflows:</b> commit and push <code>.github/workflows</code> — GitHub runs what
+        is on the branch, not what is on this machine.</li>
+    </ul>
+  </section>
+
+  {% if board.grids.prove %}{{ grid(board.grids.prove, env) }}{% endif %}
+
+  <section class="group">
+    <header class="group-head">
+      <h2>Recent runs</h2>
+      <p>The deploy workflow's runs on GitHub — by hand and on merge.</p>
+    </header>
+    <div data-live="runs"><span class="hint">asking GitHub…</span></div>
+  </section>
+</section>

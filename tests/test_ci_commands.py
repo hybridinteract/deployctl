@@ -6,6 +6,7 @@ of `setup-key` runs the real engine against directories standing in for hosts.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import subprocess
@@ -305,6 +306,11 @@ def test_doctor_is_green_when_everything_is_in_place(repo, monkeypatch):
     result = _cli("doctor", "--env", "production")
     assert result.exit_code == 0, result.output
     assert "every push to main deploys" in result.output
+
+    # The panel reads the switch from `value`, never from the sentence.
+    doc = json.loads(_cli("doctor", "--env", "production", "--json").stdout)
+    auto = next(item for item in doc["items"] if item["id"] == "auto-deploy")
+    assert auto["value"] == "on"
 
 
 # ---- ci deploy / runs / auto-deploy ----------------------------------------------------

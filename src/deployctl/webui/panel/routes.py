@@ -1,8 +1,9 @@
 """
 The HTTP surface — every route the browser can reach.
 
-Routes stay thin: parse, call into state/actions/runner, render. Everything is
-whitelisted — ``/run`` only accepts ids from ``ACTIONS``, environment names are
+Routes stay thin: parse, call into state/actions/live/runner, render. Everything
+is whitelisted — ``/run`` only accepts ids from ``ACTIONS`` and only the values an
+action declares, ``/live`` only the parts in ``LIVE_PARTS``, environment names are
 checked against the configured set, and host-scoped routes reject any address not
 in the environment's host list.
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import html
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
@@ -18,8 +20,8 @@ from fastapi.templating import Jinja2Templates
 
 from deployctl.cli import paths, registry
 
-from . import jobs, security, state
-from .actions import ACTIONS, available, board
+from . import jobs, live, security, state
+from .actions import ACTIONS, ROW_ACTIONS, ParamError, available, board, ci_fix
 from .runner import run_capture, sse_run
 from .terminal import open_native_terminal, term_result
 
@@ -27,6 +29,20 @@ router = APIRouter()
 templates = Jinja2Templates(directory=str(paths.WEBUI_DIR / "templates"))
 
 _SSE = "text/event-stream"
+
+#: The tabs, in order. The first one a page opens on is decided by live.landing().
+TABS = (("operate", "Operate"), ("setup", "Setup"), ("cicd", "CI/CD"), ("configure", "Configure"), ("logs", "Logs"))
+
+#: Live fragments: part → the facts it needs (see live.SOURCES). A fragment is
+#: rendered from templates/_live_<part>.html.
+LIVE_PARTS: dict[str, tuple[str, ...]] = {
+    "bar": ("server", "ci"),
+    "journey": ("server", "ci"),
+    "production": ("server",),
+    "history": ("server", "history"),
+    "checklist": ("ci",),
+    "runs": ("runs",),
+}
 
 
 def _env_or_404(requested: str | None) -> str:
@@ -45,30 +61,28 @@ def index(request: Request, env: str | None = None):
     """The single-page panel for one environment."""
     env = _env_or_404(env)
     cfg = state.load(env)
-    actions = available(cfg)
-    hosts = cfg.hosts
+    local = live.local_facts(cfg)
     return templates.TemplateResponse(request, "index.html", {
         "env": env,
         "envs": state.environments(),
-        "mode": cfg.mode,
-        "tls": cfg.tls_mode,
-        "sections": state.view_sections(env),
+        "tabs": TABS,
+        # Opened from this machine's files alone, so the page never waits on ssh.
+        "landing": live.landing(local),
+        "local": local,
         "summary": state.summary(env),
-        # The Deploy tab: procedures first, then the unordered groups.
+        "sections": state.view_sections(env),
         "board": board(cfg),
-        "hosts": hosts,
+        "bootstrap": state.bootstrap(env),
+        "hosts": cfg.hosts,
         "primary": cfg.primary_host,
-        "term_targets": [{"kind": "local", "host": "", "label": "Local"}]
-        + [{"kind": "ssh", "host": h, "label": h} for h in hosts],
-        "tut": state.tutorial(env),
-        # The tutorial renders a Run button only where the action exists for this
-        # environment's shape, so it never offers a button that /run would refuse.
-        "action_ids": {a.id for a in actions},
         # Jobs keep running across reloads, so a fresh page has to offer them.
         "jobs": jobs.REGISTRY.recent(),
         # Every acting request carries this; see panel/security.py.
         "token": security.TOKEN,
     })
+
+
+# ---- configuration -------------------------------------------------------------------
 
 
 @router.post("/config", response_class=HTMLResponse)
@@ -91,24 +105,29 @@ async def config_post(request: Request, env: str):
 
     try:
         applied = state.save_form(env, values)
-        total = sum(applied.values())
-        where = ", ".join(f"{k} ({n})" for k, n in applied.items()) or "nothing"
-        note = html.escape(f"Saved {total} value(s) to {where}.")
-        note += " Next: <b>Regenerate</b> → <b>Validate</b> → <b>Doctor</b> → <b>Update</b>."
-        ok = True
     except Exception as exc:  # noqa: BLE001 — show the failure in the save chip
         # Escaped: the message can quote a value that came from the form.
-        note, ok = html.escape(f"Save failed: {exc}"), False
+        return HTMLResponse(f'<span class="err">{html.escape(f"Save failed: {exc}")}</span>')
 
-    # A class, not a style attribute: the panel's CSP is `style-src 'self'`
-    # and blocks inline styles, so the colour would never be applied.
-    tone = "ok" if ok else "err"
-    # What a confirmation dialog names from now on (panel.js reads these back):
-    # a Save can change the tag or the hosts without reloading the page.
-    summary = state.summary(env)
-    image = html.escape(summary["image"], quote=True)
-    hosts = html.escape(" ".join(summary["hosts"]), quote=True)
-    return HTMLResponse(f'<span class="{tone}" data-image="{image}" data-hosts="{hosts}">{note}</span>')
+    total = sum(applied.values())
+    where = ", ".join(f"{k} ({n})" for k, n in applied.items()) or "nothing"
+    note = html.escape(f"Saved {total} value(s) to {where}. Nothing has left this machine yet.")
+    # A class, not a style attribute: the panel's CSP is `style-src 'self'`.
+    # data-hosts: what a confirmation dialog names from now on (panel.js reads it
+    # back), since a Save can change the hosts without reloading the page.
+    hosts = html.escape(" ".join(state.summary(env)["hosts"]), quote=True)
+    return HTMLResponse(
+        f'<span class="ok" data-hosts="{hosts}">{note}</span> '
+        '<button type="button" class="btn ghost sm" data-act="goto" data-tab="operate" '
+        'data-anchor="flow-apply-config">Apply it →</button>'
+    )
+
+
+@router.get("/config/problems", response_class=HTMLResponse)
+def config_problems(request: Request, env: str):
+    """What validation says about the saved configuration — re-fetched after each Save."""
+    env = _env_or_404(env)
+    return templates.TemplateResponse(request, "_problems.html", {"summary": state.summary(env)})
 
 
 @router.get("/config/preview", response_class=PlainTextResponse)
@@ -119,19 +138,42 @@ def config_preview(env: str):
     return out
 
 
+# ---- actions and jobs ----------------------------------------------------------------
+
+
+async def _refused(message: str):
+    """SSE that explains, in the output pane, why nothing was started."""
+    yield f"data: refused: {message}\n\n"
+    yield "event: done\ndata: refused\n\n"
+
+
 @router.get("/run/{action_id}")
-def run_action(action_id: str, env: str):
-    """Start one whitelisted action as a job and stream it; 404 for anything else."""
+def run_action(request: Request, action_id: str, env: str):
+    """Start one whitelisted action as a job and stream it.
+
+    404 for an id outside the whitelist. A value the action does not declare, a
+    value given twice, or one that fails its pattern is refused before anything
+    starts — explained in the output pane, where the operator is looking.
+    """
     env = _env_or_404(env)
     action = ACTIONS.get(action_id)
     if action is None:
         raise HTTPException(status_code=404, detail="unknown action")
-    cfg = state.load(env)
-    if action not in available(cfg):
+    if action not in available(state.load(env)):
         raise HTTPException(status_code=400, detail=f"action '{action_id}' does not apply to this environment")
-    argv = [part.format(env=env) for part in action.argv]
+
+    items = request.query_params.multi_items()
+    if len({key for key, _ in items}) != len(items):
+        return StreamingResponse(_refused("a value was given twice"), media_type=_SSE)
     try:
-        job = jobs.REGISTRY.start(env=env, label=action.label, argv=argv, exclusive=action.exclusive)
+        values = action.values(dict(items))
+    except ParamError as exc:
+        return StreamingResponse(_refused(str(exc)), media_type=_SSE)
+
+    argv = action.command(env, values)
+    label = " ".join([action.label, *values.values()])
+    try:
+        job = jobs.REGISTRY.start(env=env, label=label, argv=argv, exclusive=action.exclusive)
     except jobs.Busy as busy:
         return StreamingResponse(jobs.refused(busy.job), media_type=_SSE)
     return StreamingResponse(jobs.stream(job), media_type=_SSE)
@@ -170,21 +212,40 @@ def logs(host: str, env: str):
     return StreamingResponse(sse_run(["deploy", "logs", "--env", env, "--host", host]), media_type=_SSE)
 
 
-@router.get("/status", response_class=HTMLResponse)
-def status(request: Request, env: str):
-    """Quick cross-host status for the top-bar chip."""
+# ---- live facts ----------------------------------------------------------------------
+
+
+@router.get("/live/{part}", response_class=HTMLResponse)
+def live_part(request: Request, part: str, env: str, fresh: int = 0):
+    """One live fragment: the top bar, the stepper, the production card, the history,
+    the CI/CD checklist or the recent runs. ``fresh=1`` after a job ends."""
     env = _env_or_404(env)
-    rc, out = run_capture(["deploy", "status", "--env", env])
-    return templates.TemplateResponse(request, "_status.html", {
-        "out": out,
-        "healthy": rc == 0,
-        "summary": state.summary(env),
-    })
+    sources = LIVE_PARTS.get(part)
+    if sources is None:
+        raise HTTPException(status_code=404, detail="unknown part")
+    # The facts a part needs are independent reads (ssh, GitHub): run them side by side.
+    with ThreadPoolExecutor(max_workers=len(sources)) as pool:
+        read = pool.map(lambda source: live.CACHE.get(env, source, fresh=bool(fresh)), sources)
+        facts = dict(zip(sources, read))
+
+    cfg = state.load(env)
+    context = {"env": env, "live": live, **facts}
+    if part == "journey":
+        context["journey"] = live.journey(live.local_facts(cfg), facts["server"], facts["ci"])
+    if part in ("checklist", "history"):
+        # Buttons render only for actions that apply here — the same list /run checks.
+        context["usable"] = {a.id: a for a in available(cfg)}
+        context["ci_fix"] = ci_fix
+        context["row_action"] = ACTIONS[ROW_ACTIONS[0]]
+    if part == "history" and facts["history"].ok:
+        running = facts["server"].data.get("tag") if facts["server"].ok else None
+        context["rows"] = live.history_rows(facts["history"].data.get("entries", []), running)
+    return templates.TemplateResponse(request, f"_live_{part}.html", context)
 
 
 @router.get("/image-tags", response_class=HTMLResponse)
 def image_tags(env: str):
-    """Recent registry tags as clickable cards that fill the IMAGE_TAG input."""
+    """Recent registry tags as cards; a click fills the tag input beside the picker."""
     env = _env_or_404(env)
     cfg = state.load(env)
     repo = cfg.raw.get("IMAGE_REPO", "")
@@ -198,15 +259,19 @@ def image_tags(env: str):
     if not tags:
         return HTMLResponse('<span class="hint">No git-sha tags found for this image.</span>')
 
-    current = cfg.raw.get("IMAGE_TAG", "")
+    # Marked from what is already known — never an ssh round trip just to draw a badge.
+    server = live.CACHE.peek(env, "server")
+    running = server.data.get("tag") if server and server.ok else ""
     parts = ["<div class='tag-picker'>"]
     for index, tag in enumerate(tags):
         classes = "tag-card"
-        if tag.name == current:
-            classes += " tag-active"
+        badges = ""
         if index == 0:
             classes += " tag-newest"
-        badge = ' <span class="tag-badge">newest</span>' if index == 0 else ""
+            badges += ' <span class="tag-badge">newest</span>'
+        if tag.name == running:
+            classes += " tag-running"
+            badges += ' <span class="tag-badge running">running</span>'
         # tag.name is already constrained to [0-9a-f]{7,12} by registry._is_sha_tag,
         # but everything the registry returns is escaped anyway — the filter is
         # there to pick useful tags, not to sanitize, and it may be relaxed later.
@@ -217,11 +282,14 @@ def image_tags(env: str):
         # looks clickable and does nothing.
         parts.append(
             f'<button type="button" class="{classes}" data-act="tag" data-tag="{name}" '
-            f'title="pushed {html.escape(tag.pushed_at)}"><span class="tag-sha">{name}</span>{badge}'
+            f'title="pushed {html.escape(tag.pushed_at)}"><span class="tag-sha">{name}</span>{badges}'
             f' <span class="tag-age">{html.escape(tag.age)}</span></button>'
         )
     parts.append("</div>")
     return HTMLResponse("".join(parts))
+
+
+# ---- this machine's terminal ---------------------------------------------------------
 
 
 @router.post("/open-terminal/local", response_class=HTMLResponse)

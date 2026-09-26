@@ -1,0 +1,20 @@
+{#- What `validate` says about the saved configuration (the config checks only —
+    the rendered-file checks need a render, which Validate in Setup runs). -#}
+{% from "_macros.html" import pill %}
+<div class="problems-box{% if summary.errors %} has-errors{% endif %}">
+  {% if summary.problems %}
+  <div class="problems-head">
+    {% if summary.errors %}{{ pill('fail', summary.errors ~ ' error(s)') }}{% endif %}
+    {% if summary.warnings %}{{ pill('warn', summary.warnings ~ ' warning(s)') }}{% endif %}
+    <span class="hint">in the saved configuration</span>
+  </div>
+  <ul class="problems">
+    {% for p in summary.problems %}
+    <li class="{{ 'err' if p.level == 'error' else 'warn' }}">{{ p.message }}
+      {% if p.hint %}<span class="hint">— {{ p.hint }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  {{ pill('ok', 'No problems in the saved configuration') }}
+  {% endif %}
+</div>

@@ -1,0 +1,63 @@
+{#-
+  Operate — the daily tab, once a project is live. Shipping code is a merge; what
+  is left here is seeing what runs, deploying or rolling back a specific tag, and
+  putting a config change live — all through GitHub, so every deploy lands in one
+  history. Acting from this machine is still possible, folded away under
+  Emergency, for when GitHub or CI is the thing that is broken.
+-#}
+{% from "_macros.html" import flow, grid %}
+<section class="pane{% if landing == 'operate' %} active{% endif %}" id="pane-operate" role="tabpanel" aria-labelledby="tab-operate">
+
+  <section class="group">
+    <header class="group-head">
+      <h2>Running now</h2>
+      <p>Every host, the tag it runs and every service on it — read over ssh, refreshed after each job.</p>
+    </header>
+    <div data-live="production"><span class="hint">reading the hosts…</span></div>
+  </section>
+
+  {% if board.grids.release %}{{ grid(board.grids.release, env) }}{% endif %}
+
+  <section class="group" id="releases">
+    <header class="group-head">
+      <h2>Releases</h2>
+      <p>From the history on the primary — deploys from CI and from any laptop, with who shipped each.</p>
+    </header>
+    <div data-live="history"><span class="hint">reading the history…</span></div>
+  </section>
+
+  {% if board.flows['apply-config'] %}{{ flow(board.flows['apply-config'], env) }}{% endif %}
+
+  {% if board.grids.maintenance %}{{ grid(board.grids.maintenance, env) }}{% endif %}
+
+  <section class="group">
+    <header class="group-head">
+      <h2>Open a terminal</h2>
+      <p>Your own terminal app, with your own ssh agent and keys — nothing runs inside this page.</p>
+    </header>
+    <div class="cards">
+      <button type="button" class="acard" data-act="swap" data-method="POST" data-url="/open-terminal/local"
+              data-target="#termResult">
+        <span class="alabel">This project</span>
+        <span class="adesc">A shell in the deploy directory on this machine.</span>
+      </button>
+      {% for h in hosts %}
+      <button type="button" class="acard" data-act="swap" data-method="POST"
+              data-url="/open-terminal/ssh/{{ h }}?env={{ env }}" data-target="#termResult">
+        <span class="alabel mono">{{ h }}</span>
+        <span class="adesc">ssh in as the deploy user · {{ 'primary' if h == primary else 'secondary' }}</span>
+      </button>
+      {% endfor %}
+    </div>
+    <p id="termResult" class="hint spaced"></p>
+  </section>
+
+  {% if board.grids.emergency %}
+  {#- Folded by default: these bypass CI's history of runs, so they should take a
+      deliberate click to reach — and read as the exception they are. -#}
+  <details class="danger-zone">
+    <summary><span class="arrow">▶</span> Emergency — deploy from this machine, without GitHub</summary>
+    {{ grid(board.grids.emergency, env) }}
+  </details>
+  {% endif %}
+</section>

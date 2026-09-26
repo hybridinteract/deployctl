@@ -13,12 +13,11 @@ for.
 | **[30-OPERATIONS.md](30-OPERATIONS.md)** | Day two: rolling updates (what to edit, in what order), rollback, backups, `/docs` auth, extra services, troubleshooting. |
 | **[35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md)** | Deploying from GitHub Actions on merge: the CI ssh key, pinned host keys, the config secret, switching it on, rolling back. |
 | **[40-ADOPTING-A-NEW-PROJECT.md](40-ADOPTING-A-NEW-PROJECT.md)** | Dropping the tool into a different repository; migrating from an existing deployment. |
-| **[50-WEBUI.md](50-WEBUI.md)** | The control panel: the tabs, the Deploy tab's layout, and the safety model. |
+| **[50-WEBUI.md](50-WEBUI.md)** | The control panel: Operate, Setup, CI/CD, Configure and Logs, and the safety model. |
 | **[60-COMMAND-REFERENCE.md](60-COMMAND-REFERENCE.md)** | Every command, what it changes, every flag, exit codes. Kept honest by a test. |
 
-Prefer to be walked through it? `deployctl webui` → the **Tutorial** tab is the same
-ground as 10 and 20, in order, with every command pre-filled from your configuration and a
-Run button on the steps the panel can perform itself.
+Prefer to be walked through it? `deployctl webui` opens on **Setup** for a new project,
+and its stepper names the next step until the environment deploys on every merge.
 
 ## The two procedures, in one screen
 

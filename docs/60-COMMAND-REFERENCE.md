@@ -307,10 +307,11 @@ the tag.
 ### `deployctl deploy shell HOST --env E`
 **Touches: hosts (read).** Interactive shell in `REMOTE_DIR`, using your own ssh agent.
 
-### `deployctl deploy history --env E`
+### `deployctl deploy history --env E [--json]`
 **Touches: hosts (read).** The environment's releases, from the history kept on the
 primary: when, which tag, what kind (release, rollback, first bring-up, one-host roll) and
-who — the record `rollback` consults when no `--to` is given.
+who — the record `rollback` consults when no `--to` is given. `--json` prints the same
+entries, oldest first, for the control panel.
 
 ### `deployctl deploy unlock --env E`
 **Touches: hosts (write).** Every host-changing command (init, update, rollback, migrate,

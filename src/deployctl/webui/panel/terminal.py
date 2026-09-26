@@ -1,9 +1,10 @@
 """
 Open the OS terminal on THIS machine — no in-browser shell.
 
-The panel runs locally, so the Terminals tab just launches the real terminal app:
-"Local" lands in deployctl/, per-host buttons run ``ssh user@host`` with your own
-agent and keys. Nothing to keep alive, and no shell ever runs inside the page.
+The panel runs locally, so "Open a terminal" (Operate tab) just launches the real
+terminal app: "This project" lands in the deploy directory, per-host buttons run
+``ssh user@host`` with your own agent and keys. Nothing to keep alive, and no shell
+ever runs inside the page.
 """
 
 from __future__ import annotations

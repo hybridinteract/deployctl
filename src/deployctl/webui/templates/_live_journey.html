@@ -1,0 +1,23 @@
+{#- The stepper — Server → First deploy → CI/CD → Live — and the one next step.
+    It never switches tab by itself; the button does, when the operator asks. -#}
+{% set labels = {'operate': 'Operate', 'setup': 'Setup', 'cicd': 'CI/CD'} %}
+<ol class="stepper">
+  {% for st in journey.stages %}
+  <li class="step {{ st.status }}" title="{{ st.detail }}">
+    <span class="step-n" aria-hidden="true">
+      {{- '✓' if st.status == 'done' else ('!' if st.status == 'fail' else loop.index) -}}
+    </span>
+    <span class="step-label">{{ st.label }}</span>
+    <span class="sr-only">— {{ st.status }}</span>
+  </li>
+  {% endfor %}
+</ol>
+<div class="next">
+  {% if journey.next.tab %}
+  <span class="next-k">Next</span>
+  <span>{{ journey.next.text }}</span>
+  <button type="button" class="btn sm" data-act="goto" data-tab="{{ journey.next.tab }}">{{ labels[journey.next.tab] }} →</button>
+  {% else %}
+  <span class="dim">{{ journey.next.text }}</span>
+  {% endif %}
+</div>

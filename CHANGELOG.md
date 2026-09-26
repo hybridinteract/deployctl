@@ -3,6 +3,44 @@
 Versions are git tags (`vX.Y.Z`); projects install one with
 `uv tool install git+ssh://git@github.com/hybridinteract/deployctl@vX.Y.Z`.
 
+## 0.11.0
+
+The control panel, rebuilt around continuous deployment.
+
+**Panel**
+- **Five tabs, in the order a project needs them.** *Operate* (every day: what runs, deploy
+  or roll back a tag, the release history, apply a config change, maintenance, a terminal),
+  *Setup* (once per server: the bootstrap script, the missing configuration, the first
+  deploy), *CI/CD* (once per repository: `ci doctor` as a checklist with a fix button per
+  row, recent runs), *Configure*, *Logs*. The Tutorial and Terminals tabs are gone: their
+  content is in Setup, Operate and the docs.
+- **A live top bar and a stepper.** The running tag, who shipped it and when, health,
+  whether GitHub's config matches this machine's, and whether merges deploy — read through
+  `deploy status --json` and `ci doctor --json`, cached for 15 s, refreshed after every job.
+  The stepper (Server → First deploy → CI/CD → Live) names the next step. The page opens
+  on Operate once CI/CD is set up, on Setup before.
+- **Deploys go through GitHub.** Deploy a tag, roll back, roll back to any earlier
+  release, and apply a config change all run the deploy workflow (`ci deploy`), so every
+  deploy lands in one history. Deploying straight from this machine is folded under
+  *Emergency*.
+- **Buttons can take a value — only one the action declares.** Today that is an image tag,
+  checked against the CLI's own pattern and passed as one whole argument; an undeclared,
+  repeated or malformed value starts nothing and says why in the output pane.
+- Dark mode (follows the system), keyboard-navigable tabs, a toast when a job ends, the
+  open tab kept in the address. Configure shows what validation says, re-read on Save; the
+  image-tag field is gone (the tag is not configuration since 0.10.0); a *Deploy branch*
+  field is new.
+
+**CLI**
+- `deploy history --json`, for the panel's release list.
+- `ci doctor --json`: the automatic-deploys row carries `value: on|off`.
+
+**Fixed**
+- `validate` failed every project without `IMAGE_TAG` in its config (so every project
+  after `migrate-config`): it compared the rendered compose file with `repo:` and an empty
+  tag. It now checks against the tag the files were rendered with, and an image reference
+  is never derived without a tag.
+
 ## 0.10.0
 
 Continuous deployment by default, and fleets that are never left split.

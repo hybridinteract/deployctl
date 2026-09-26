@@ -701,7 +701,9 @@ def _derive(env: str, raw: dict[str, str]) -> dict[str, Any]:
             candidates.insert(0, "http://localhost:3000")
         cors_origins = ",".join(x for x in candidates if x)
 
-    image_ref = f"{raw['IMAGE_REPO']}:{raw['IMAGE_TAG']}" if raw["IMAGE_REPO"] else ""
+    # Empty until a tag is resolved (cli/tags.py): "repo:" is not an image, and a
+    # value that looks like one is how it ends up checked against, or shipped.
+    image_ref = f"{raw['IMAGE_REPO']}:{raw['IMAGE_TAG']}" if raw["IMAGE_REPO"] and raw["IMAGE_TAG"] else ""
     worker_image_ref = f"{image_ref}-worker" if image_ref and raw["WORKER_BUILD_TARGET"] else image_ref
 
     return {

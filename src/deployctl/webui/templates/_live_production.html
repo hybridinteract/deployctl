@@ -1,0 +1,43 @@
+{#- Running now: each host, its tag, who shipped it, and every service on it. -#}
+{% from "_macros.html" import pill %}
+{% if not server.ok %}
+<p class="callout warn">Could not read the hosts: {{ server.error }}<br>
+  <span class="hint">The same check in a terminal: <code>deployctl deploy status --env {{ env }}</code></span></p>
+{% else %}
+{% if server.data.split %}
+<p class="callout danger">The hosts run different tags — a release was reverted on some hosts but not
+  all. Deploy one tag to every host (Deploy a version, below) to bring them back together.</p>
+{% endif %}
+<div class="hosts">
+  {% for h in server.data.hosts %}
+  <article class="hostcard">
+    <header>
+      <b class="mono">{{ h.host }}</b> <span class="dim">{{ h.role }}</span>
+      {% if not h.reachable %}{{ pill('fail', 'unreachable') }}
+      {% elif h.tag %}<span class="mono tagchip">{{ h.tag }}</span>{% else %}{{ pill('todo', 'nothing deployed') }}{% endif %}
+    </header>
+    {% if h.tag %}
+    {% set by = live.who(h.deployed_by) %}
+    <p class="dim small">deployed {{ live.ago(h.deployed_at) or h.deployed_at }} by
+      {% if by.url %}<a href="{{ by.url }}" target="_blank" rel="noopener noreferrer">{{ by.label }}</a>{% else %}{{ by.label }}{% endif %}</p>
+    {% endif %}
+    {% if h.services %}
+    <table class="svc">
+      <thead><tr><th>service</th><th>state</th><th>health</th><th title="container restarts since it was created">restarts</th></tr></thead>
+      <tbody>
+        {% for s in h.services %}
+        {% set oneshot = s.state == 'exited' and s.exit_code == '0' and s.restart_policy == 'no' %}
+        <tr>
+          <td class="mono">{{ s.name }}</td>
+          <td>{% if s.state == 'running' or oneshot %}{{ pill('ok', s.state) }}{% else %}{{ pill('fail', s.state) }}{% endif %}</td>
+          <td>{% if s.health == 'unhealthy' %}{{ pill('fail', 'unhealthy') }}{% elif s.health == 'healthy' %}{{ pill('ok', 'healthy') }}{% else %}<span class="dim">{{ s.health }}</span>{% endif %}</td>
+          <td class="{{ 'warnnum' if s.restarts else '' }}">{{ s.restarts if s.restarts is not none else '?' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% endif %}

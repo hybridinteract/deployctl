@@ -1,0 +1,23 @@
+{#- `ci doctor`, one row per item: its status, why, and the button that fixes it.
+    Rows no command can fix (gh login, the install token) show what to run instead. -#}
+{% from "_macros.html" import pill, action_button %}
+{% if not ci.ok %}
+<p class="callout warn">Could not run the CI checks: {{ ci.error }}<br>
+  <span class="hint">The same check in a terminal: <code>deployctl ci doctor --env {{ env }}</code></span></p>
+{% else %}
+<ul class="checklist">
+  {% for item in ci.data['items'] %}
+  {% set fix = ci_fix(item) %}
+  {% set a = usable.get(fix) if fix else none %}
+  <li class="check">
+    {{ pill(item.status, {'ok': 'done', 'warn': 'check', 'todo': 'to do', 'fail': 'blocked'}.get(item.status, item.status)) }}
+    <div class="check-body">
+      <b>{{ item.title }}</b>
+      <span class="dim">{{ item.detail }}</span>
+      {% if item.status != 'ok' and item.fix and not a %}<code class="fixcmd">{{ item.fix }}</code>{% endif %}
+    </div>
+    {% if a %}{{ action_button(a, env, quiet=(item.status == 'ok')) }}{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}

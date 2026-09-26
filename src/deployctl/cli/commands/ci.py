@@ -568,8 +568,9 @@ def unpack(
 # ---- ci doctor -----------------------------------------------------------------------
 
 
-def _check(items: list[dict], key: str, status: str, title: str, detail: str = "", fix: str = "") -> None:
-    items.append({"id": key, "status": status, "title": title, "detail": detail, "fix": fix})
+def _check(items: list[dict], key: str, status: str, title: str, detail: str = "", fix: str = "",
+           **extra: str) -> None:
+    items.append({"id": key, "status": status, "title": title, "detail": detail, "fix": fix, **extra})
 
 
 def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
@@ -664,7 +665,8 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
 
     auto = repo_values.get("AUTO_DEPLOY", "")
     _check(items, "auto-deploy", "ok", "Automatic deploys",
-           f"on — every push to {cfg.raw['DEPLOY_BRANCH']} deploys" if auto == "true" else "off — deploy with `ci deploy`")
+           f"on — every push to {cfg.raw['DEPLOY_BRANCH']} deploys" if auto == "true" else "off — deploy with `ci deploy`",
+           value="on" if auto == "true" else "off")
     return items
 
 

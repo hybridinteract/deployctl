@@ -1,0 +1,113 @@
+{#-
+  The building blocks every tab and live fragment draws with.
+
+  An action is always rendered from its row in panel/actions.py — label, the exact
+  command, where it acts, what it leaves changed — so a card can never describe
+  something other than what it runs. Buttons carry data-act="run"; one delegated
+  listener in panel.js does the rest (the CSP forbids inline handlers).
+
+  A button that takes a value names it in data-params, and panel.js reads that
+  value from the input of the same name in the nearest [data-param-scope]. The
+  server checks it again against the action's pattern: the page is a convenience,
+  never the check.
+-#}
+
+{% macro run_attrs(a, env) -%}
+data-act="run" data-url="/run/{{ a.id }}?env={{ env }}" data-label="{{ a.label }}"
+data-danger="{{ '1' if a.danger else '0' }}" data-where="{{ a.where }}"
+{%- if a.params %} data-params="{{ a.param_names }}"{% endif %}
+{%- endmacro %}
+
+{#- A full card: for flows and groups. -#}
+{% macro action_card(a, env, n=None) -%}
+<button type="button" class="acard{% if a.danger %} danger{% endif %}" {{ run_attrs(a, env) }}>
+  <span class="acard-top">
+    {%- if n %}<span class="stepno">{{ n }}</span>{% endif -%}
+    <span class="alabel">{{ a.label }}</span>
+  </span>
+  <span class="where">{{ a.where }}</span>
+  <span class="acmd mono">{{ a.shown(env) }}</span>
+  <span class="adesc">{{ a.desc }}</span>
+  <span class="aeffect">{{ a.effect }}</span>
+</button>
+{%- endmacro %}
+
+{#- A compact button: for rows in a list. The card's text moves to the tooltip. -#}
+{% macro action_button(a, env, quiet=False) -%}
+<button type="button" class="btn sm{% if quiet %} ghost{% endif %}{% if a.danger %} danger{% endif %}"
+        {{ run_attrs(a, env) }} title="{{ a.shown(env) }} — {{ a.effect }}">{{ a.label }}</button>
+{%- endmacro %}
+
+{#- One input per param a group's buttons read; a tag gets the registry picker. -#}
+{% macro param_inputs(params, env, scope) -%}
+<div class="params">
+  {% for p in params %}
+  <label class="param" for="{{ scope }}-{{ p.name }}">
+    <span class="param-label">{{ p.label }}</span>
+    <input id="{{ scope }}-{{ p.name }}" name="{{ p.name }}" class="mono" placeholder="{{ p.placeholder }}"
+           autocomplete="off" spellcheck="false">
+  </label>
+  {% if p.name == 'tag' %}
+  <button type="button" class="btn ghost sm" data-act="swap" data-url="/image-tags?env={{ env }}"
+          data-target="#{{ scope }}-tags">Recent tags from the registry</button>
+  {% endif %}
+  {% endfor %}
+</div>
+{% for p in params if p.name == 'tag' %}<div class="tag-slot" id="{{ scope }}-tags"></div>{% endfor %}
+{%- endmacro %}
+
+{#- An ordered procedure: numbered cards, left to right. -#}
+{% macro flow(f, env, n=None) -%}
+<section class="group" id="flow-{{ f.flow.id }}" data-param-scope>
+  <header class="group-head">
+    <h2>{% if n %}<span class="stepno">{{ n }}</span> {% endif %}{{ f.flow.title }}</h2>
+    <p>{{ f.flow.desc }}</p>
+  </header>
+  {% if f.params %}{{ param_inputs(f.params, env, 'flow-' ~ f.flow.id) }}{% endif %}
+  <ol class="rail">
+    {% for s in f.steps %}
+    <li>
+      {% if s.kind == 'edit' %}
+      <button type="button" class="acard edit" data-act="goto" data-tab="configure"
+              data-anchor="{{ 'sec-' ~ s.edit.section if s.edit.section else 'cfgForm' }}">
+        <span class="acard-top"><span class="stepno">{{ s.n }}</span><span class="alabel">{{ s.edit.label }}</span></span>
+        <span class="where">you, in Configure</span>
+        <span class="adesc">{{ s.edit.desc }}</span>
+      </button>
+      {% else %}
+      {{ action_card(s.action, env, n=s.n) }}
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{%- endmacro %}
+
+{#- A group with no order. -#}
+{% macro grid(g, env) -%}
+<section class="group{% if g.grid.tone == 'danger' %} tone-danger{% endif %}" id="grid-{{ g.grid.id }}" data-param-scope>
+  <header class="group-head">
+    <h2>{{ g.grid.title }}</h2>
+    <p>{{ g.grid.desc }}</p>
+  </header>
+  {% if g.params %}{{ param_inputs(g.params, env, 'grid-' ~ g.grid.id) }}{% endif %}
+  <div class="cards">
+    {% for a in g.actions %}{{ action_card(a, env) }}{% endfor %}
+  </div>
+</section>
+{%- endmacro %}
+
+{#- A status word with a colour and a shape, so it reads without colour too. -#}
+{% macro pill(status, text) -%}
+<span class="pill {{ status }}"><span class="pill-mark" aria-hidden="true">
+  {{- {'ok': '✓', 'done': '✓', 'warn': '!', 'fail': '✗', 'todo': '○', 'unknown': '?'}.get(status, '·') -}}
+</span>{{ text }}</span>
+{%- endmacro %}
+
+{#- A code block with a copy button (the text is read from the element itself). -#}
+{% macro codeblock(id, text) -%}
+<div class="codeblock">
+  <pre id="{{ id }}" class="mono">{{ text }}</pre>
+  <button type="button" class="copy-btn" data-act="copy" data-copy="#{{ id }}">copy</button>
+</div>
+{%- endmacro %}

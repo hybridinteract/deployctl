@@ -85,3 +85,28 @@ def test_two_tags_across_the_fleet_are_reported_as_split():
             "HOST\tb\tsecondary\treachable\nSTATE\tb\tIMAGE_TAG=old0000\n")
     state = parse_state(text)
     assert state["split"] is True and state["tag"] is None
+
+
+def test_history_json_is_what_the_panel_reads(write_config, monkeypatch):
+    """`deploy history --json`: this environment's entries, oldest first, nothing else on stdout."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from deployctl.cli.commands import deploy
+    from deployctl.cli.main import app
+
+    write_config("production", "MODE=single\nPROJECT_NAME=demo\nBASE_DOMAIN=demo.test\n"
+                               "IMAGE_REPO=ghcr.io/acme/demo\nHOSTS=203.0.113.10\nACME_EMAIL=ops@demo.test\n"
+                               "POSTGRES_DB=demo\nPOSTGRES_USER=demo\n")
+    primary = ("2026-09-24T09:00:00Z\tproduction\t6dff488\tdeploy\tamal@mac\n"
+               "2026-09-24T09:30:00Z\tstaging\t1111111\tdeploy\tamal@mac\n"
+               "2026-09-25T10:00:00Z\tproduction\t8e3e648\tdeploy\thttps://github.com/acme/demo/actions/runs/1\n")
+    monkeypatch.setattr(deploy, "_engine_output", lambda cfg, command: primary)
+
+    result = CliRunner().invoke(app, ["deploy", "history", "--env", "production", "--json"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.stdout)
+    assert doc["env"] == "production"
+    assert [e["tag"] for e in doc["entries"]] == ["6dff488", "8e3e648"]
+    assert doc["entries"][1]["by"].endswith("/actions/runs/1")

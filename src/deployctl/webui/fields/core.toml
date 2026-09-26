@@ -81,7 +81,7 @@ help = "The app is served at https://<subdomain>.<base domain>."
 [[section]]
 id = "image"
 title = "Application image"
-description = "Built by CI (or `deployctl image push`) and pulled by every host. Pin an immutable git-sha tag — never 'latest'."
+description = "Built by CI and pulled by every host. Which tag runs is not configured here: CI deploys the tag it built, and Operate deploys the one you pick."
 
 [[section.field]]
 key = "IMAGE_REPO"
@@ -89,14 +89,6 @@ label = "Image repository"
 target = "common"
 required = true
 placeholder = "ghcr.io/your-org/your-app"
-
-[[section.field]]
-key = "IMAGE_TAG"
-label = "Image tag"
-target = "env"
-required = true
-placeholder = "fb31c25"
-help = "The git short SHA to deploy. Use the tag picker to fetch recent ones from the registry."
 
 [[section]]
 id = "runtime"
@@ -145,3 +137,15 @@ target = "env"
 type = "select"
 options = ["false", "true"]
 help = "/docs is additionally protected by the htpasswd file on each host."
+
+[[section]]
+id = "cicd"
+title = "Continuous deployment"
+description = "Which branch deploys. The rest of CI/CD — keys, secrets, workflows — is set up from the CI/CD tab."
+
+[[section.field]]
+key = "DEPLOY_BRANCH"
+label = "Deploy branch"
+target = "common"
+placeholder = "main"
+help = "A merge here builds the image and, with automatic deploys on, ships it. Generate workflows again after changing it."

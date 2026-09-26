@@ -161,52 +161,27 @@ def view_sections(env: str) -> list[dict]:
     return sections
 
 
-def tutorial(env: str) -> dict:
-    """Values the walkthrough substitutes into its commands.
+def bootstrap(env: str) -> dict:
+    """The Setup tab's first card: the root script for this environment, and where to run it.
 
-    The point of the Tutorial tab is that its commands are the ones *this*
-    environment actually needs — a bootstrap block with the real deploy user and
-    REMOTE_DIR in it is copy-pasteable; one with ``<your-user>`` in it is a step
-    that gets typed wrong at 2am. Where a value is not configured yet, a visible
-    angle-bracket placeholder is substituted, so a half-filled config produces an
-    obviously-incomplete command rather than a plausible wrong one.
+    The same text ``deployctl server bootstrap-script`` prints, so the page and the
+    terminal can never disagree about what a new server gets.
     """
+    from deployctl.cli.commands.server import render_bootstrap
+
     cfg = load(env)
-    hosts = cfg.hosts
-
-    def placeholder(value: str, name: str) -> str:
-        return value or f"<{name}>"
-
     return {
-        "env": env,
-        "mode": cfg.mode,
-        "cluster": cfg.mode == "cluster",
-        "single": cfg.mode != "cluster",
+        "script": render_bootstrap(cfg),
+        "hosts": cfg.hosts or ["<server-ip>"],
+        "ssh_user": cfg.raw.get("SSH_USER") or "deploy",
+        "domain": cfg.derived["API_DOMAIN"],
         "tls_le": cfg.derived["TLS_LE"],
         "tls_lb": cfg.derived["TLS_LB"],
-        "tls_none": cfg.derived["TLS_NONE"],
-        "with_postgres": cfg.derived["WITH_POSTGRES"],
-        "with_redis": cfg.derived["WITH_REDIS"],
-        "with_beat": cfg.derived["WITH_BEAT"],
-        "has_migrate": bool(cfg.raw.get("MIGRATE_CMD")),
-        "project": placeholder(cfg.raw.get("PROJECT_NAME", ""), "project"),
-        "domain": placeholder(cfg.derived["API_DOMAIN"], "api.example.com"),
-        "base_domain": placeholder(cfg.raw.get("BASE_DOMAIN", ""), "example.com"),
-        "ssh_user": cfg.raw.get("SSH_USER") or "deploy",
-        "remote_dir": placeholder(cfg.remote_dir, "opt/myapp"),
-        "hosts": hosts,
-        "primary": cfg.primary_host or "<server-ip>",
-        "first_host": hosts[0] if hosts else "<server-ip>",
-        "secondaries": [h for h in hosts if h != cfg.primary_host],
-        "image_repo": placeholder(cfg.raw.get("IMAGE_REPO", ""), "ghcr.io/your-org/myapp"),
-        "registry_host": cfg.derived["REGISTRY_HOST"] or "ghcr.io",
-        "registry_user": placeholder(cfg.raw.get("REGISTRY_USER", ""), "your-github-user"),
-        "acme_email": placeholder(cfg.raw.get("ACME_EMAIL", ""), "ops@example.com"),
     }
 
 
 def summary(env: str) -> dict:
-    """The top-bar chips."""
+    """The environment as configured: the page's fixed facts, and what validation says."""
     cfg = load(env)
     problems = cfg.validate()
     return {
@@ -215,9 +190,9 @@ def summary(env: str) -> dict:
         "tls": cfg.tls_mode,
         "project": cfg.raw.get("PROJECT_NAME") or "—",
         "domain": cfg.derived["API_DOMAIN"] or "—",
-        "image": (cfg.derived["IMAGE_REF"].rsplit("/", 1)[-1] if cfg.derived["IMAGE_REF"] else "—"),
         "hosts": cfg.hosts,
         "primary": cfg.primary_host or "—",
+        "problems": [dataclasses.asdict(p) for p in problems],
         "errors": sum(1 for p in problems if p.level == "error"),
         "warnings": sum(1 for p in problems if p.level == "warn"),
     }

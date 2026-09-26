@@ -9,6 +9,7 @@ keeps the scripts from blocking on a prompt; the browser confirmed already.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import signal
@@ -122,6 +123,35 @@ def _kill_if_still_there(group: int, grace: float = 1.0) -> None:
             return
         time.sleep(0.05)
     signal_group(group, signal.SIGKILL)
+
+
+def run_json(argv: list[str], timeout: int = 60) -> tuple[object | None, str]:
+    """``(parsed stdout, "")`` for a ``--json`` command, or ``(None, why not)``. Never raises.
+
+    stdout only: the JSON commands print their document there and nothing else,
+    while warnings go to stderr — mixing the two, as run_capture does, would make
+    every warning a parse error. The exit code is not the verdict: ``ci doctor``
+    exits 1 when something is missing and still prints the full checklist.
+    """
+    try:
+        proc = subprocess.run(
+            [*_DEPLOYCTL, *argv],
+            cwd=str(paths.workdir()),
+            env=_child_env(),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {timeout}s"
+    except Exception as exc:  # noqa: BLE001 — rendered in the UI, never a 500
+        return None, f"{type(exc).__name__}: {exc}"
+    try:
+        return json.loads(proc.stdout), ""
+    except ValueError:
+        # What the command said instead — its last lines are where the reason is.
+        said = strip_ansi(proc.stderr or proc.stdout).strip().splitlines()
+        return None, " ".join(said[-3:]) or f"exit {proc.returncode} with no output"
 
 
 def run_capture(argv: list[str], timeout: int = 120) -> tuple[int, str]:
