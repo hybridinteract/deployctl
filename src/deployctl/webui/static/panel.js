@@ -1,7 +1,6 @@
 /* deployctl control panel — all of the panel's behaviour.
  *
- * No framework and no CDN. The panel replaced htmx with the ~40 lines under
- * "fetch and swap" below for three reasons, in order of importance:
+ * No framework and no CDN, for three reasons, in order of importance:
  *
  *   1. A page that can start a production deploy must not load script from a
  *      third-party host. A compromised CDN would have had the same reach as the
@@ -14,7 +13,11 @@
  *
  * There are no inline handlers anywhere: the Content-Security-Policy forbids
  * them, so behaviour is attached by delegation from data-act attributes. Adding
- * a button means adding a data-act, not a <script> block.
+ * a button means adding a data-act and a case in onClick, not a <script> block.
+ *
+ * Sections, top to bottom: requests · output pane · actions · tabs · live
+ * facts · config form · hosts widget · tags · copy · toasts · resizable split ·
+ * wiring.
  */
 'use strict';
 
@@ -22,34 +25,27 @@
   const TOKEN = document.body.dataset.token || '';
   const ENV = document.body.dataset.env || '';
 
-  // ---- request helpers -----------------------------------------------------
+  // ---- requests --------------------------------------------------------------
 
   /** Append the session token to a same-origin path. */
   function withToken(url) {
     return url + (url.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN);
   }
 
-  /** Fetch a fragment of HTML and put it into a target element. */
-  async function swap(url, targetSel, { method = 'GET', body = null, indicator = null } = {}) {
-    const target = document.querySelector(targetSel);
-    const spinner = indicator ? document.querySelector(indicator) : null;
-    if (spinner) spinner.style.display = 'inline';
+  /** Fetch a fragment of HTML and put it into a target (an element or a selector). */
+  async function swap(url, target, { method = 'GET', body = null } = {}) {
+    const el = typeof target === 'string' ? document.querySelector(target) : target;
+    if (el) el.classList.add('loading');
     try {
-      const res = await fetch(withToken(url), {
-        method,
-        body,
-        headers: { 'X-Deployctl-Token': TOKEN },
-      });
+      const res = await fetch(withToken(url), { method, body, headers: { 'X-Deployctl-Token': TOKEN } });
       const text = await res.text();
-      if (target) {
-        target.innerHTML = res.ok
-          ? text
-          : '<span class="hint err">' + escapeHtml(text.slice(0, 400)) + '</span>';
+      if (el) {
+        el.innerHTML = res.ok ? text : '<span class="hint err">' + escapeHtml(text.slice(0, 400)) + '</span>';
       }
     } catch (err) {
-      if (target) target.innerHTML = '<span class="hint err">' + escapeHtml(String(err)) + '</span>';
+      if (el) el.innerHTML = '<span class="hint err">' + escapeHtml(String(err)) + '</span>';
     } finally {
-      if (spinner) spinner.style.display = '';
+      if (el) el.classList.remove('loading');
     }
   }
 
@@ -59,7 +55,7 @@
     return d.innerHTML;
   }
 
-  // ---- output pane ---------------------------------------------------------
+  // ---- output pane -------------------------------------------------------------
   // What the pane shows is a VIEW of a job, never its owner. A command started
   // from here runs as a server-side job (panel/jobs.py) and keeps going when
   // this stream closes — which every other card, a reload and closing the tab
@@ -73,8 +69,7 @@
   }
 
   function clearRunning() {
-    document.querySelectorAll('.acard.running, .tut-run.running, .fstep.running')
-      .forEach((c) => c.classList.remove('running'));
+    document.querySelectorAll('.running').forEach((c) => c.classList.remove('running'));
   }
 
   function setCancel(visible) {
@@ -119,6 +114,7 @@
     });
     es.addEventListener('busy', () => refreshJobs());
     es.addEventListener('done', (e) => {
+      const wasJob = job !== null;
       document.getElementById('termState').textContent = '(' + e.data + ')';
       if (card) card.classList.remove('running');
       es.close();
@@ -126,6 +122,13 @@
       job = null;
       setCancel(false);
       refreshJobs();
+      if (wasJob) {
+        toast(label + ' — ' + (e.data === 'exit 0' ? 'done' : e.data), e.data === 'exit 0');
+        // A job may have changed what runs, the history or GitHub: read them again.
+        refreshLive(true);
+      } else if (e.data === 'refused') {
+        toast(label + ' — refused, see the output', false);
+      }
     });
     es.onerror = () => {
       document.getElementById('termState').textContent = job
@@ -138,27 +141,6 @@
     };
   }
 
-  /**
-   * The question a host-changing click asks. It names the environment, its hosts
-   * and the image tag that will ship: with staging and production in one picker,
-   * "Update — Continue?" is how the wrong one gets deployed, and a tag picked but
-   * never saved is how the wrong version does.
-   */
-  function confirmText(label) {
-    const d = document.body.dataset;
-    return label + ' — ' + ENV.toUpperCase() + '\n\n'
-      + 'Environment:  ' + ENV + '\n'
-      + 'Hosts:        ' + (d.hosts || '—') + '\n'
-      + 'Image:        ' + (d.image || '—') + '   (the saved tag)\n\n'
-      + 'This changes a running deployment. Continue?';
-  }
-
-  /** Run a whitelisted action and stream its output into the pane. */
-  function runAction(url, danger, label, card) {
-    if (danger && !confirm(confirmText(label))) return;
-    follow(url, label, card);
-  }
-
   function attach(id, label) {
     follow('/jobs/' + encodeURIComponent(id) + '/stream', label, null);
   }
@@ -166,31 +148,153 @@
   function cancelJob() {
     if (!job) return;
     const message = 'Cancel "' + job.label + '" part-way through?\n\n'
-      + 'A host can be left half-rolled. Afterwards run Status, then Update again to finish.';
+      + 'A host can be left half-rolled. Afterwards run Status, then deploy again to finish.';
     if (!confirm(message)) return;
     document.getElementById('termState').textContent = '(cancelling…)';
     swap('/jobs/' + encodeURIComponent(job.id) + '/cancel', '#jobBar', { method: 'POST' });
   }
 
-  // ---- tabs ----------------------------------------------------------------
+  // ---- actions -----------------------------------------------------------------
+  // A button runs one whitelisted action. If it takes a value (data-params), the
+  // value comes from the input of that name in the nearest [data-param-scope] —
+  // a group's tag field, or a history row's hidden input. The server checks it
+  // again; this only saves a round trip for an empty field.
 
-  function switchTab(name) {
-    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-    document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.id === 'pane-' + name));
+  /** The values a button needs: { values } — or { missing: input } when one is empty. */
+  function collectParams(el) {
+    const names = (el.dataset.params || '').split(' ').filter(Boolean);
+    const scope = el.closest('[data-param-scope]');
+    const values = {};
+    for (const name of names) {
+      const input = scope ? scope.querySelector('[name="' + name + '"]') : null;
+      const value = input ? input.value.trim() : '';
+      if (!value) return { missing: input, name };
+      values[name] = value;
+    }
+    return { values };
   }
 
-  /** Jump from a flow's edit step to the section of the form it refers to. */
-  function gotoSection(sectionId) {
-    switchTab('configure');
-    const card = document.getElementById('sec-' + sectionId);
-    if (!card) return;
-    card.open = true;
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.classList.add('flash');
-    setTimeout(() => card.classList.remove('flash'), 1400);
+  /**
+   * The question a host-changing click asks. It names the environment, where the
+   * action acts, the hosts and the tag: with staging and production in one
+   * picker, "Deploy — Continue?" is how the wrong one gets deployed.
+   */
+  function confirmText(label, where, values) {
+    const d = document.body.dataset;
+    let text = label + ' — ' + ENV.toUpperCase() + '\n\n'
+      + 'Environment:  ' + ENV + '\n'
+      + 'Acts on:      ' + (where || '—') + '\n'
+      + 'Hosts:        ' + (d.hosts || '—') + '\n';
+    if (values.tag) text += 'Tag:          ' + values.tag + '\n';
+    return text + '\nThis changes a running deployment. Continue?';
   }
 
-  // ---- hosts widget --------------------------------------------------------
+  function runAction(el) {
+    const got = collectParams(el);
+    if (got.missing !== undefined) {
+      if (got.missing) {
+        got.missing.classList.add('invalid');
+        got.missing.focus();
+      }
+      toast('Enter a ' + got.name + ' first — or pick one from Recent tags', false);
+      return;
+    }
+    const label = [el.dataset.label, ...Object.values(got.values)].join(' ');
+    if (el.dataset.danger === '1' && !confirm(confirmText(el.dataset.label, el.dataset.where, got.values))) return;
+    let url = el.dataset.url;
+    for (const [name, value] of Object.entries(got.values)) {
+      url += '&' + encodeURIComponent(name) + '=' + encodeURIComponent(value);
+    }
+    follow(url, label, el);
+  }
+
+  // ---- tabs --------------------------------------------------------------------
+  // Real tabs (role="tab"): arrow keys move between them, and the open one is in
+  // the URL hash, so a reload stays where you were. Without a hash the page opens
+  // where the server's landing() put it.
+
+  function tabs() {
+    return Array.from(document.querySelectorAll('[role="tab"]'));
+  }
+
+  function switchTab(name, { focus = false } = {}) {
+    const tab = document.getElementById('tab-' + name);
+    if (!tab) return;
+    tabs().forEach((t) => {
+      const on = t === tab;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+    });
+    document.querySelectorAll('[role="tabpanel"]').forEach((p) => p.classList.toggle('active', p.id === 'pane-' + name));
+    if (focus) tab.focus();
+    history.replaceState(null, '', '#' + name);
+    loadLive(document.getElementById('pane-' + name));
+  }
+
+  function onTabKey(event) {
+    const list = tabs();
+    const index = list.indexOf(event.target);
+    if (index < 0) return;
+    const moves = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: list.length - 1 };
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    const next = list[(moves[event.key] + list.length) % list.length];
+    switchTab(next.dataset.tab, { focus: true });
+  }
+
+  /** Open a tab and bring one element into view (a Configure section, a flow). */
+  function goto(tab, anchor) {
+    switchTab(tab);
+    const el = anchor ? document.getElementById(anchor) : null;
+    if (!el) return;
+    if (el.tagName === 'DETAILS') el.open = true;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1400);
+  }
+
+  // ---- live facts ----------------------------------------------------------------
+  // Elements marked data-live="<part>" are filled from /live/<part>: what the hosts
+  // run, the history, the CI checklist. The server caches each fact briefly, so a
+  // part is fetched when it first becomes visible and again after every job.
+
+  function liveUrl(part, fresh) {
+    return '/live/' + part + '?env=' + encodeURIComponent(ENV) + (fresh ? '&fresh=1' : '');
+  }
+
+  /** Fill the live parts in root (root included) that have not been loaded yet. */
+  function loadLive(root) {
+    if (!root) return;
+    const parts = Array.from(root.querySelectorAll('[data-live]'));
+    if (root.matches('[data-live]')) parts.push(root);
+    parts.forEach((el) => {
+      if (el.dataset.loaded) return;
+      el.dataset.loaded = '1';
+      swap(liveUrl(el.dataset.live, false), el);
+    });
+  }
+
+  /** Re-read every part already on screen; fresh = only a read made after now will do. */
+  function refreshLive(fresh) {
+    document.querySelectorAll('[data-live][data-loaded]').forEach((el) => {
+      swap(liveUrl(el.dataset.live, fresh), el);
+    });
+  }
+
+  // ---- config form -----------------------------------------------------------------
+
+  async function saveConfig(form) {
+    const result = document.getElementById('saveResult');
+    result.innerHTML = '<span class="hint">saving…</span>';
+    await swap('/config?env=' + encodeURIComponent(ENV), result, { method: 'POST', body: new FormData(form) });
+    // Keep what confirmText names in step with what was just saved.
+    const saved = result.querySelector('[data-hosts]');
+    if (saved) document.body.dataset.hosts = saved.dataset.hosts;
+    swap('/config/problems?env=' + encodeURIComponent(ENV), '#problems');
+  }
+
+  // ---- hosts widget ----------------------------------------------------------------
 
   function addHost() {
     const rows = document.getElementById('hostRows');
@@ -203,20 +307,21 @@
     input.name = 'host_ip';
     input.placeholder = '10.0.0.10';
     input.className = 'mono';
+    input.setAttribute('aria-label', 'Host address');
 
-    const pri = document.createElement('span');
+    const pri = document.createElement('label');
     pri.className = 'pri';
     const radio = document.createElement('input');
     radio.type = 'radio';
     radio.name = 'primary_index';
     radio.value = String(index);
-    pri.appendChild(radio);
-    pri.appendChild(document.createTextNode(' primary'));
+    pri.append(radio, document.createTextNode(' primary'));
 
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'iconbtn';
     del.title = 'Remove';
+    del.setAttribute('aria-label', 'Remove host');
     del.textContent = '✕';
     del.dataset.act = 'remove-host';
 
@@ -232,42 +337,66 @@
     });
   }
 
-  // ---- image tags ----------------------------------------------------------
+  // ---- tags ------------------------------------------------------------------------
 
-  function pickTag(tag) {
-    const input = document.getElementById('imageTagInput');
+  /** A tag card fills the tag input of its own group — never another group's. */
+  function pickTag(card) {
+    const scope = card.closest('[data-param-scope]');
+    const input = scope ? scope.querySelector('input[name="tag"]') : null;
     if (input) {
-      input.value = tag;
-      input.style.outline = '2px solid var(--ok)';
-      setTimeout(() => (input.style.outline = ''), 1200);
+      input.value = card.dataset.tag;
+      input.classList.remove('invalid');
+      input.classList.add('picked');
+      setTimeout(() => input.classList.remove('picked'), 1200);
     }
-    document.querySelectorAll('.tag-card').forEach((c) =>
-      c.classList.toggle('tag-active', c.dataset.tag === tag));
-  }
-
-  // ---- config form ---------------------------------------------------------
-
-  async function saveConfig(form) {
-    const result = document.getElementById('saveResult');
-    result.innerHTML = '<span class="hint">saving…</span>';
-    await swap('/config?env=' + encodeURIComponent(ENV), '#saveResult', {
-      method: 'POST',
-      body: new FormData(form),
-    });
-    // Keep what confirmText names in step with what was just saved.
-    const saved = document.querySelector('#saveResult [data-image]');
-    if (saved) {
-      document.body.dataset.image = saved.dataset.image;
-      document.body.dataset.hosts = saved.dataset.hosts;
-      const chip = document.getElementById('chipImage');
-      if (chip) chip.textContent = saved.dataset.image;
+    if (scope) {
+      scope.querySelectorAll('.tag-card').forEach((c) => c.classList.toggle('tag-active', c === card));
     }
   }
 
-  // ---- resizable split -----------------------------------------------------
+  // ---- copy ------------------------------------------------------------------------
+
+  function copyText(button) {
+    const source = document.querySelector(button.dataset.copy);
+    if (!source) return;
+    navigator.clipboard.writeText(source.textContent).then(
+      () => {
+        button.textContent = 'copied';
+        button.classList.add('copied');
+        setTimeout(() => { button.textContent = 'copy'; button.classList.remove('copied'); }, 1400);
+      },
+      () => { button.textContent = 'select it'; },
+    );
+  }
+
+  // ---- toasts ----------------------------------------------------------------------
+  // A job can finish while you are on another tab; the toast says so, and how.
+
+  function toast(text, ok) {
+    const box = document.getElementById('toasts');
+    if (!box) return;
+    const item = document.createElement('div');
+    item.className = 'toast ' + (ok ? 'toast-ok' : 'toast-bad');
+    item.textContent = text;
+    box.appendChild(item);
+    setTimeout(() => item.remove(), 6000);
+  }
+
+  // ---- resizable split -------------------------------------------------------------
   // Drag the gutter to set the output pane's width; double-click resets it. The
   // width is stored as a percentage so it still makes sense after the window is
   // resized, and kept in localStorage so it survives a reload.
+
+  function storage(action, key, value) {
+    // Private windows and locked-down browsers throw on localStorage; the split
+    // then simply is not remembered.
+    try {
+      if (action === 'get') return localStorage.getItem(key);
+      if (action === 'set') localStorage.setItem(key, value);
+      if (action === 'remove') localStorage.removeItem(key);
+    } catch (err) { /* not remembered */ }
+    return null;
+  }
 
   function initGutter() {
     const DEFAULT = '38%';
@@ -277,7 +406,7 @@
     const root = document.documentElement;
     if (!gutter || !shell) return;
 
-    const saved = localStorage.getItem(KEY);
+    const saved = storage('get', KEY);
     if (saved) root.style.setProperty('--term-w', saved);
 
     let dragging = false;
@@ -293,10 +422,9 @@
     gutter.addEventListener('mousedown', (e) => {
       dragging = true;
       gutter.classList.add('dragging');
-      // Without these the drag selects text across the page and the cursor
+      // Without this the drag selects text across the page and the cursor
       // flickers whenever it leaves the 5px handle.
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'col-resize';
+      document.body.classList.add('resizing');
       e.preventDefault();
     });
 
@@ -306,84 +434,24 @@
       if (!dragging) return;
       dragging = false;
       gutter.classList.remove('dragging');
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
-      localStorage.setItem(KEY, root.style.getPropertyValue('--term-w') || DEFAULT);
+      document.body.classList.remove('resizing');
+      storage('set', KEY, root.style.getPropertyValue('--term-w') || DEFAULT);
     });
 
     gutter.addEventListener('dblclick', () => {
       root.style.setProperty('--term-w', DEFAULT);
-      localStorage.removeItem(KEY);
+      storage('remove', KEY);
     });
   }
 
-  // ---- tutorial ------------------------------------------------------------
-
-  /** Which deployment shape the walkthrough shows; remembered across reloads. */
-  function tutShape(shape) {
-    const wrap = document.getElementById('tutWrap');
-    if (!wrap) return;
-    wrap.dataset.shape = shape;
-    localStorage.setItem('deployctl.tutShape', shape);
-  }
-
-  function initTutorial() {
-    const wrap = document.getElementById('tutWrap');
-    if (!wrap) return;
-
-    const savedShape = localStorage.getItem('deployctl.tutShape');
-    if (savedShape === 'single' || savedShape === 'cluster') wrap.dataset.shape = savedShape;
-
-    // A copy button on every command block. The text is captured before the
-    // button is inserted, so the button's own label can never end up in the
-    // clipboard.
-    document.querySelectorAll('.tut-code').forEach((block) => {
-      const text = block.textContent;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'copy-btn';
-      btn.textContent = 'copy';
-      btn.addEventListener('click', () => {
-        navigator.clipboard.writeText(text).then(
-          () => {
-            btn.textContent = 'copied';
-            btn.classList.add('copied');
-            setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1400);
-          },
-          () => { btn.textContent = 'select it'; },
-        );
-      });
-      block.appendChild(btn);
-    });
-
-    // Highlight the section currently in view. The scroll container is .panes,
-    // not the window, so the listener has to go there.
-    const panes = document.querySelector('.panes');
-    const links = Array.from(document.querySelectorAll('.tut-nav .tn'));
-    const sections = links.map((a) => document.querySelector(a.getAttribute('href'))).filter(Boolean);
-    if (!panes || !sections.length) return;
-
-    panes.addEventListener('scroll', () => {
-      const pane = document.getElementById('pane-tutorial');
-      if (!pane || !pane.classList.contains('active')) return;
-      // The last section whose top has passed the sticky nav is the one being read.
-      let index = 0;
-      sections.forEach((section, i) => {
-        if (section.getBoundingClientRect().top <= 120) index = i;
-      });
-      links.forEach((a, i) => a.classList.toggle('active', i === index));
-    }, { passive: true });
-  }
-
-  // ---- wiring --------------------------------------------------------------
+  // ---- wiring ----------------------------------------------------------------------
   // One delegated listener. Every interactive element declares data-act plus
   // whatever it needs; nothing carries an inline handler.
 
   function onClick(event) {
     // A click whose target IS a <dialog> landed on the backdrop: the content
     // lives in children, so the dialog itself is only hit when the pointer
-    // missed it. Closing there is what a modal is expected to do, and handling
-    // it here keeps the promise of one listener for the whole page.
+    // missed it. Closing there is what a modal is expected to do.
     if (event.target.tagName === 'DIALOG') {
       event.target.close();
       return;
@@ -391,24 +459,23 @@
 
     const el = event.target.closest('[data-act]');
     if (!el) return;
-    const act = el.dataset.act;
 
-    switch (act) {
+    switch (el.dataset.act) {
       case 'tab':
         switchTab(el.dataset.tab);
         break;
-      case 'goto-section':
-        gotoSection(el.dataset.section);
+      case 'goto':
+        goto(el.dataset.tab, el.dataset.anchor || '');
         break;
       case 'run':
-        runAction(el.dataset.url, el.dataset.danger === '1', el.dataset.label, el);
+        runAction(el);
         break;
       case 'swap':
         event.preventDefault();
-        swap(el.dataset.url, el.dataset.target, {
-          method: el.dataset.method || 'GET',
-          indicator: el.dataset.indicator || null,
-        });
+        swap(el.dataset.url, el.dataset.target, { method: el.dataset.method || 'GET' });
+        break;
+      case 'refresh':
+        refreshLive(true);
         break;
       case 'preview':
         window.open(withToken('/config/preview?env=' + encodeURIComponent(ENV)), '_blank');
@@ -448,14 +515,14 @@
         el.parentElement.remove();
         renumberHosts();
         break;
-      case 'tut-shape':
-        tutShape(el.dataset.shape);
-        break;
       // Tag cards arrive later, as a server-rendered fragment. They are reached
       // by the same delegation as everything else — declaring data-act is what
       // makes that work, so the fragment must set it too (see routes.image_tags).
       case 'tag':
-        pickTag(el.dataset.tag);
+        pickTag(el);
+        break;
+      case 'copy':
+        copyText(el);
         break;
       default:
         break;
@@ -464,6 +531,9 @@
 
   function init() {
     document.addEventListener('click', onClick);
+    document.addEventListener('input', (e) => e.target.classList.remove('invalid'));
+    const tablist = document.querySelector('[role="tablist"]');
+    if (tablist) tablist.addEventListener('keydown', onTabKey);
 
     const form = document.getElementById('cfgForm');
     if (form) {
@@ -481,7 +551,18 @@
     }
 
     initGutter();
-    initTutorial();
+
+    // Back/forward, or a hash typed into the address bar, opens that tab.
+    window.addEventListener('hashchange', () => {
+      if (document.getElementById('tab-' + location.hash.slice(1))) switchTab(location.hash.slice(1));
+    });
+
+    // The top bar and the stepper, then the open tab — from the hash if there is one.
+    loadLive(document.querySelector('.topbar'));
+    loadLive(document.querySelector('.journey'));
+    const wanted = location.hash.slice(1);
+    const open = document.querySelector('[role="tab"].active');
+    switchTab(document.getElementById('tab-' + wanted) ? wanted : (open ? open.dataset.tab : 'operate'));
   }
 
   if (document.readyState === 'loading') {

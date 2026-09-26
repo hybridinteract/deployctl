@@ -7,7 +7,7 @@ with no symptom: an element that carries the right classes and the right styling
 but no ``data-act`` renders perfectly, looks clickable, and silently does nothing.
 
 That is exactly what happened to the tag picker: the cards had ``data-tag`` but no
-``data-act``, so clicking a tag did not fill IMAGE_TAG. Nothing errored — the
+``data-act``, so clicking a tag did not fill the tag field. Nothing errored — the
 handler simply returned early.
 
 These tests close the loop in both directions: every ``data-act`` the server or
@@ -78,7 +78,7 @@ class TestDelegationIsComplete:
 
 
 class TestTagPicker:
-    """The specific regression, pinned."""
+    """The specific regression, pinned — and its successor: a card fills its own group's input."""
 
     def test_tag_cards_carry_both_attributes(self):
         source = ROUTES_PY.read_text()
@@ -89,15 +89,44 @@ class TestTagPicker:
         )
         assert "data-tag=" in card.group(0), "tag cards must carry the tag itself"
 
-    def test_panel_js_reads_the_tag_from_the_dataset(self):
+    def test_panel_js_hands_the_card_to_pick_tag(self):
         js = PANEL_JS.read_text()
         assert "case 'tag':" in js
-        assert "pickTag(el.dataset.tag)" in js
+        assert "pickTag(el)" in js
 
-    def test_pick_tag_targets_the_image_tag_input(self):
+    def test_pick_tag_fills_the_input_in_its_own_scope(self):
+        """Operate, Emergency and Setup each have a tag field; a card must not fill another's."""
         js = PANEL_JS.read_text()
         pick = js[js.index("function pickTag"):]
-        assert "imageTagInput" in pick[:400], "pickTag no longer targets the IMAGE_TAG input"
+        assert "closest('[data-param-scope]')" in pick[:500]
+        assert "input[name=\"tag\"]" in pick[:500]
+
+    def test_the_picker_lands_inside_a_param_scope(self):
+        """The picker's slot is rendered by param_inputs, which only groups with data-param-scope call."""
+        macros = (TEMPLATES / "_macros.html").read_text()
+        for macro in ("flow", "grid"):
+            body = macros[macros.index(f"{{% macro {macro}("):]
+            body = body[:body.index("{%- endmacro %}")]
+            assert "data-param-scope" in body and "param_inputs(" in body, macro
+
+
+class TestParamsReachTheServer:
+    """A button that takes a value must be able to find it, and send it."""
+
+    def test_run_buttons_name_their_params(self):
+        macros = (TEMPLATES / "_macros.html").read_text()
+        attrs = macros[macros.index("{% macro run_attrs"):]
+        assert 'data-params="{{ a.param_names }}"' in attrs[:600]
+
+    def test_history_rows_give_their_button_a_tag(self):
+        row = (TEMPLATES / "_live_history.html").read_text()
+        assert "data-param-scope" in row
+        assert '<input type="hidden" name="tag" value="{{ r.tag }}">' in row
+
+    def test_values_are_url_encoded(self):
+        js = PANEL_JS.read_text()
+        run = js[js.index("function runAction"):]
+        assert "encodeURIComponent(value)" in run[:1200]
 
 
 class TestNoInlineStyles:
@@ -136,7 +165,7 @@ class TestFieldGuides:
         assert guide.link.startswith("https://")
 
     def test_the_template_opens_the_dialog_it_renders(self):
-        text = (TEMPLATES / "index.html").read_text()
+        text = (TEMPLATES / "_tab_configure.html").read_text()
         assert 'data-guide="guide-{{ f.key }}"' in text
         assert 'id="guide-{{ f.key }}"' in text, (
             "the button's data-guide must match the dialog's id, or the modal never opens"
@@ -144,7 +173,7 @@ class TestFieldGuides:
 
     def test_guide_buttons_cannot_submit_the_config_form(self):
         """The dialog sits inside <form id="cfgForm">; a default button submits it."""
-        text = (TEMPLATES / "index.html").read_text()
+        text = (TEMPLATES / "_tab_configure.html").read_text()
         for act in ("guide", "guide-close"):
             button = re.search(rf'<button[^>]*data-act="{act}"[^>]*>', text) or re.search(
                 rf'<button[^>]*data-act="{act}"[^>]*', text

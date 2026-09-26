@@ -1,0 +1,66 @@
+{#-
+  Setup — once per server: prepare it, finish the configuration, deploy once.
+  Everything after that happens through CI/CD, so this tab is where a new project
+  starts and where an operator comes back only to add a server.
+-#}
+{% from "_macros.html" import flow, codeblock, pill %}
+<section class="pane{% if landing == 'setup' %} active{% endif %}" id="pane-setup" role="tabpanel" aria-labelledby="tab-setup">
+
+  <section class="group" id="setup-server">
+    <header class="group-head">
+      <h2><span class="stepno">1</span> Prepare the server</h2>
+      <p>A fresh Ubuntu server, reachable as root with your ssh key. One script, run once as root,
+        does the rest: Docker, the <code>{{ bootstrap.ssh_user }}</code> user with your keys, the deploy
+        directory, swap, and key-only ssh.</p>
+    </header>
+    <div class="card-body">
+      <p class="lede">From this machine, once per new server:</p>
+      {% for h in bootstrap.hosts %}
+      {{ codeblock('boot-cmd-' ~ loop.index, "deployctl server bootstrap-script --env " ~ env ~ " | ssh root@" ~ h ~ " 'bash -s'") }}
+      {% endfor %}
+      <p class="callout warn">For a <b>new</b> server. It upgrades packages and reboots at the end when the
+        kernel changed. On a server that already serves traffic add <code>--no-reboot</code>
+        after <code>bootstrap-script</code> — or leave it alone: a server deployctl already deploys to has
+        everything this script sets up.</p>
+      <p class="lede">Then check that the deploy user can reach Docker:</p>
+      {{ codeblock('boot-check', "ssh " ~ bootstrap.ssh_user ~ "@" ~ bootstrap.hosts[0] ~ " docker ps") }}
+      <details class="fold">
+        <summary><span class="arrow">▶</span> Read the script</summary>
+        {{ codeblock('boot-script', bootstrap.script) }}
+      </details>
+      <ul class="notes">
+        {% if bootstrap.tls_le %}
+        <li><b>DNS:</b> an A record for <code>{{ bootstrap.domain or 'your domain' }}</code> → the server's
+          public IP, before the SSL step. Ports 80 and 443 open; certbot needs 80.</li>
+        {% elif bootstrap.tls_lb %}
+        <li><b>DNS:</b> an A record for <code>{{ bootstrap.domain or 'your domain' }}</code> → the <b>load
+          balancer</b>, not a host. Every host in both databases' trusted sources.</li>
+        {% endif %}
+        <li><b>Port 22</b> must accept CI as well as you: open with keys only, or a tailnet or jump host
+          — see the CI/CD tab.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="group" id="setup-config">
+    <header class="group-head">
+      <h2><span class="stepno">2</span> Finish the configuration</h2>
+      <p>Hosts, domain, registry and image. The first deploy refuses to start while anything below is an error.</p>
+    </header>
+    <div class="card-body">
+      {% if summary.errors %}
+      {{ pill('todo', summary.errors ~ ' to fix') }}
+      <ul class="problems">
+        {% for p in summary.problems if p.level == 'error' %}<li class="err">{{ p.message }}</li>{% endfor %}
+      </ul>
+      {% else %}
+      {{ pill('ok', 'Complete') }}
+      {% endif %}
+      <button type="button" class="btn ghost sm" data-act="goto" data-tab="configure" data-anchor="cfgForm">Open Configure →</button>
+    </div>
+  </section>
+
+  {% if board.flows['first-deploy'] %}
+  {{ flow(board.flows['first-deploy'], env, n=3) }}
+  {% endif %}
+</section>

@@ -1,0 +1,21 @@
+{#- Logs — follow one host's containers. A viewer, not a job: it stops when you
+    click away, and it never changes anything. -#}
+<section class="pane{% if landing == 'logs' %} active{% endif %}" id="pane-logs" role="tabpanel" aria-labelledby="tab-logs">
+  <section class="group">
+    <header class="group-head">
+      <h2>Follow logs</h2>
+      <p>docker compose logs -f on one host, streamed into the output pane.</p>
+    </header>
+    <div class="cards">
+      {% for h in hosts %}
+      <button type="button" class="acard" data-act="run" data-url="/logs/{{ h }}?env={{ env }}"
+              data-danger="0" data-label="logs {{ h }}">
+        <span class="alabel mono">{{ h }}</span>
+        <span class="adesc">{{ 'primary' if h == primary else 'secondary' }} · docker compose logs -f</span>
+      </button>
+      {% else %}
+      <p class="hint">No hosts configured yet.</p>
+      {% endfor %}
+    </div>
+  </section>
+</section>

@@ -91,3 +91,25 @@ def test_the_cache_survives_a_forced_render(cfg):
     tags.remember("production", "abc1234")
     assert tags.cache_file("production").parent.name == "generated"
     assert tags.cached("production") == "abc1234"
+
+
+def test_no_tag_means_no_image_reference(cfg):
+    """Never "repo:" — a half reference is how the wrong thing gets checked, or shipped."""
+    assert cfg().derived["IMAGE_REF"] == ""
+    assert cfg().derived["WORKER_IMAGE_REF"] == ""
+
+
+def test_validate_checks_the_files_against_the_tag_they_were_rendered_with(cfg):
+    """Regression: with IMAGE_TAG out of config, validate compared the compose file with
+    "ghcr.io/acme/demo:" and failed every project that had just rendered cleanly."""
+    from typer.testing import CliRunner
+
+    from deployctl.cli.main import app
+
+    runner = CliRunner()
+    rendered = runner.invoke(app, ["setup", "--env", "production", "--tag", "8e3e648"])
+    assert rendered.exit_code == 0, rendered.output
+    checked = runner.invoke(app, ["validate", "--env", "production", "--skip-docker"])
+    assert "image tag 8e3e648" in checked.output
+    assert "does not reference" not in checked.output
+    assert checked.exit_code in (0, 2), checked.output

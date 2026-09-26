@@ -7,8 +7,9 @@ when something is broken.
 
 ## Rolling out an update
 
-This is the everyday path. In the panel it is the **Roll out a new version** rail at the
-top of the Deploy tab, drawn in this order; from the CLI it is the same six steps.
+Once CI/CD is set up, a release is a merge — see
+[35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md). This section is the same
+release by hand, from a laptop: the panel's **Operate → Emergency**, or these commands.
 
 ### What you edit
 

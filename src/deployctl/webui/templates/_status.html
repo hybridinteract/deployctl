@@ -1,6 +1,0 @@
-<span class="dot {{ 'ok' if healthy else 'bad' }}" id="hdot"></span>
-<span class="mono" title="{{ out | e }}">{{ 'healthy' if healthy else 'check failed' }} · {{ summary.hosts | length }} host(s)</span>
-{#- data-act, not hx-get: htmx was removed from the panel, and an hx- attribute
-    left this refresh button dead after the first check. -#}
-<button class="iconbtn" data-act="swap" data-url="/status?env={{ summary.env }}" data-target="#statusbar"
-        title="Quick status check (ssh to every host)">↻</button>

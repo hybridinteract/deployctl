@@ -333,10 +333,16 @@ def shell(
 
 
 @deploy_app.command("history")
-def history(env: str = env_option()) -> None:
+def history(
+    env: str = env_option(),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable, oldest first: when, tag, kind, who."),
+) -> None:
     """The environment's releases, from the primary — the same record CI and laptops write."""
     env_name = resolve_env(env)
     entries = parse_history(_engine_output(load_config(env_name), "history"), env_name)
+    if as_json:
+        print(json.dumps({"env": env_name, "entries": entries}, indent=2))
+        return
     if not entries:
         ui.warn("no releases recorded on the primary yet")
         raise typer.Exit(2)

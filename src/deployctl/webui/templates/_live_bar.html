@@ -1,0 +1,45 @@
+{#- The top bar's live facts: what runs, who shipped it, whether it is healthy,
+    whether GitHub's config matches this machine's, and whether merges deploy. -#}
+{% from "_macros.html" import pill %}
+{% if server.ok %}
+  {% set bad = live.service_problems(server.data) %}
+  {% set newest = server.data.hosts | selectattr('tag') | first %}
+  {% if server.data.split %}
+    {{ pill('fail', 'hosts run different tags') }}
+  {% elif newest %}
+    {% set by = live.who(newest.deployed_by) %}
+    <span class="stat">
+      <span class="dot {{ 'ok' if not bad else 'bad' }}" aria-hidden="true"></span>
+      <span class="k">live</span> <b class="mono">{{ server.data.tag }}</b>
+      <span class="dim">· {% if by.url %}<a href="{{ by.url }}" target="_blank" rel="noopener noreferrer">{{ by.label }}</a>{% else %}{{ by.label }}{% endif %}
+        · {{ live.ago(newest.deployed_at) or newest.deployed_at }}</span>
+    </span>
+  {% else %}
+    {{ pill('todo', 'nothing deployed yet') }}
+  {% endif %}
+  {% if newest or server.data.split %}
+    {% if bad %}
+      <span class="pill fail" title="{{ bad | join('\n') }}"><span class="pill-mark" aria-hidden="true">✗</span>{{ bad | length }} problem(s)</span>
+    {% else %}
+      {{ pill('ok', 'healthy') }}
+    {% endif %}
+  {% endif %}
+{% else %}
+  <span class="pill unknown" title="{{ server.error }}"><span class="pill-mark" aria-hidden="true">?</span>hosts: can't read</span>
+{% endif %}
+
+{% set gh = live.ci_item(ci, 'github') %}
+{% if not ci.ok %}
+  <span class="pill unknown" title="{{ ci.error }}"><span class="pill-mark" aria-hidden="true">?</span>GitHub: can't read</span>
+{% elif gh and gh.status == 'fail' %}
+  <span class="pill todo" title="{{ gh.detail }}"><span class="pill-mark" aria-hidden="true">○</span>GitHub not connected</span>
+{% else %}
+  {% set sync = live.ci_item(ci, 'config') %}
+  {% if sync %}
+    {% if sync.status == 'ok' %}{{ pill('ok', 'config synced') }}
+    {% elif sync.status == 'todo' %}{{ pill('todo', 'config not uploaded') }}
+    {% else %}<span class="pill warn" title="{{ sync.detail }}"><span class="pill-mark" aria-hidden="true">!</span>config differs from GitHub</span>{% endif %}
+  {% endif %}
+  {% set auto = live.ci_item(ci, 'auto-deploy') %}
+  {% if auto %}{{ pill('ok' if auto.value == 'on' else 'todo', 'auto-deploy ' ~ auto.value) }}{% endif %}
+{% endif %}

@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>deployctl · control panel</title>
+  <title>deployctl · {{ env }}</title>
+  {# Light and dark both follow the system; panel.css defines each palette. #}
+  <meta name="color-scheme" content="light dark">
   {#
     Every asset is served from this origin. Nothing is loaded from a CDN: a page
     that can start a production deploy must not execute script fetched from a
@@ -16,10 +18,9 @@
   <link rel="icon" href="data:,">
 </head>
 {# The token every acting request carries, and the environment the page is bound
-   to, read once by panel.js rather than interpolated into each URL. Hosts and
-   image are what a confirmation dialog names — see confirmText in panel.js. #}
-<body data-token="{{ token }}" data-env="{{ env }}"
-      data-hosts="{{ summary.hosts|join(' ') if summary else '' }}" data-image="{{ summary.image if summary else '' }}">
+   to, read once by panel.js rather than interpolated into each URL. The hosts are
+   what a confirmation dialog names, with the tag it was given — see confirmText. #}
+<body data-token="{{ token }}" data-env="{{ env }}" data-hosts="{{ summary.hosts|join(' ') if summary else '' }}">
 {% block body %}{% endblock %}
 <script src="/static/panel.js"></script>
 </body>

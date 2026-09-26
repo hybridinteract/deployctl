@@ -1,0 +1,25 @@
+{#- The deploy workflow's recent runs on GitHub (`deployctl ci runs`). -#}
+{% from "_macros.html" import pill %}
+{% if not runs.ok %}
+<p class="callout warn">Could not list the runs: {{ runs.error }}</p>
+{% elif not runs.data %}
+<p class="hint">No deploys through GitHub yet.</p>
+{% else %}
+<table class="releases">
+  <thead><tr><th>when</th><th>tag</th><th>what</th><th>started by</th><th>result</th><th></th></tr></thead>
+  <tbody>
+    {% for r in runs.data %}
+    <tr>
+      <td title="{{ r.at }}">{{ live.ago(r.at) or r.at }}</td>
+      <td class="mono">{{ r.tag }}</td>
+      <td>{{ r.action }}</td>
+      <td>{{ r.trigger }}</td>
+      <td>{% if r.status == 'success' %}{{ pill('ok', 'success') }}
+          {% elif r.status in ('failure', 'cancelled', 'timed_out') %}{{ pill('fail', r.status) }}
+          {% else %}{{ pill('unknown', r.status or 'running') }}{% endif %}</td>
+      <td><a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">open ↗</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

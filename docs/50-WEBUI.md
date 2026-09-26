@@ -1,12 +1,13 @@
 # 50 — The control panel
 
-A local web UI over the same CLI. Useful when you want the configuration laid out in front
-of you, a tag picker instead of copy-paste, and streamed output without a terminal.
+A local web UI over the same CLI: a new project goes from a bare server to deploying on
+every merge through its **Setup** and **CI/CD** tabs, and daily work — seeing what runs,
+deploying or rolling back a tag, putting a config change live — happens in **Operate**.
 
 ## Start it
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.9.0   # once per machine
+uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.11.0   # once per machine
 deployctl webui               # → http://127.0.0.1:8765
 ```
 
@@ -87,7 +88,10 @@ which can send it requests. So:
   outright.
 - **A fixed action whitelist.** The browser can only trigger the actions in
   `webui/panel/actions.py`; anything else is a 404. Unknown hosts and actions that do not
-  apply to the environment's shape are refused.
+  apply to the environment's shape are refused. The only value a request may carry is one
+  the action declares — today, an image tag — and it must match the same pattern the CLI
+  enforces; it is passed as one whole argument, never through a shell. A value that is
+  undeclared, repeated or malformed starts nothing.
 - **Secrets never reach the browser.** Password fields render empty with a "saved" badge.
   Submitting one blank keeps the stored value; only a non-empty value replaces it.
   *Preview resolved config* masks credentials by key name **and** by value, so the
@@ -103,102 +107,98 @@ which can send it requests. So:
 
 ---
 
-## The tabs
+## The layout
 
-**Configure** — every setting for the selected environment, grouped, with help text. The
-first section, *Deployment shape*, holds `MODE` — but note it only sets **defaults**:
-`TLS_MODE`, `POSTGRES_MODE` and `REDIS_MODE` win wherever they are set explicitly, so
-switching mode and saving does not silently rewrite them. Run **Validate** afterwards; it
-reports exactly what still disagrees. Switching an environment that is already deployed is
-a migration rather than a toggle — see
-[30-OPERATIONS.md](30-OPERATIONS.md#changing-an-environments-shape).
-Fields come from `webui/fields/*.toml` plus your `project/fields.toml`, filtered by the
-environment's mode, so a single-server environment shows the TLS section and a cluster
-environment shows the hosts widget. Save writes straight to the config files.
-*Preview resolved config* opens what the CLI actually sees, secrets masked.
+```
+[production ▾]  demo · single · 1 host(s)   ● live 8e3e648 · GitHub Actions · 2h ago   ✓ healthy  ✓ config synced  ✓ auto-deploy on
+ ✓ Server ─ ✓ First deploy ─ ③ CI/CD ─ ④ Live      NEXT  Finish CI/CD: Pinned host keys.  [CI/CD →]
+ Operate │ Setup │ CI/CD │ Configure │ Logs                                              │ output
+```
 
-**Deploy** — arranged by *how the commands are actually used*, not alphabetically:
+**The top bar is live.** What the hosts run, who shipped it (an Actions run links to it),
+whether every service is healthy, whether GitHub's copy of the config matches this
+machine's, and whether merges deploy. It comes from `deployctl deploy status --json` and
+`deployctl ci doctor --json`, run in the background — the panel never opens ssh or calls
+GitHub itself. Each fact is kept for 15 seconds, and read again after every job and on ↻.
 
-- **Roll out a new version** — the everyday path, drawn as a numbered rail you work left to
-  right: `1 Set the image tag → 2 Regenerate → 3 Validate → 4 Doctor → 5 Update →
-  6 Status`. Each step assumes the one before it passed.
-- **First deployment** — the same shape, ending in `Init` (and `SSL: obtain` on a
-  single-server Let's Encrypt environment) instead of `Update`.
-- **Check & observe** — a plain group, because these have no order. Nothing here changes
-  anything, so all of it is safe mid-incident.
-- **Recover** — Rollback, Restart, Migrate, Backup now.
-- **Take it down** — Stop, on its own, because it is the only action with no automatic way
-  back.
+**The stepper** says how far the environment is: Server → First deploy → CI/CD → Live,
+and names the one next step with a button to the tab it is done in. The page opens on
+**Operate** once CI/CD is set up on this machine (workflows and `CI_SCOPE`), and on
+**Setup** before that. It never switches tab by itself; the address keeps the open tab
+(`#cicd`), so a reload stays put.
 
-The two rails are ordered; the three groups below are not, and they are drawn differently
-so that difference is visible without reading. Steps with a **dashed amber border are edits
-you make yourself** — clicking one jumps to that section of the Configure tab rather than
-running anything. Every other card shows the exact `deployctl` command it runs, whether it
-touches a host at all, and what it leaves changed. Mutating actions confirm first — the
-dialog names the environment, its hosts and the saved image tag, so a click on the wrong
-environment or an unsaved tag is caught there — and output streams into the pane on the
-right.
+### Operate — every day, once live
+
+- **Running now** — each host, its tag, who deployed it and when, and every service's
+  state, health and restart count. The same rules as a deploy's service watch decide what
+  counts as a problem.
+- **Deploy a version** — a tag (type it, or pick from *Recent tags from the registry*),
+  then **Deploy**, or **Roll back** to the release before the running one. Both run the
+  deploy workflow on GitHub (`deployctl ci deploy`) and follow it in the output pane, so
+  every deploy lands in one history.
+- **Releases** — the history on the primary, newest first, with who shipped each. Every
+  earlier release has **Roll back to this**.
+- **Apply a config change** — ① change it in Configure and Save, ② **Sync config**, ③
+  **Deploy the change** (the running tag, with the new config).
+- **Maintenance** — Status, Doctor, Restart, Backups, Back up now, SSL check.
+- **Open a terminal** — your own terminal app, in the deploy directory or ssh'd into a host
+  with your own agent and keys. No shell runs inside the page.
+- **Emergency** (folded) — update, roll back, migrate or stop *from this machine*, straight
+  over ssh: for when GitHub or CI is what is broken. Same engine, lock, health gate and
+  revert; outside CI's history of runs.
+
+### Setup — once per server
+
+1. **Prepare the server** — the root script for this environment
+   (`deployctl server bootstrap-script`), how to run it on each host, and the check
+   afterwards. For a *new* server: it upgrades packages and may reboot.
+2. **Finish the configuration** — what still blocks a deploy, with a jump to Configure.
+3. **First deploy** — pick the tag CI published, then Regenerate → Validate → Doctor →
+   Init → SSL: obtain → Status, left to right.
+
+### CI/CD — once per repository
+
+The checklist is `deployctl ci doctor`: one row per piece, with its status, why, and the
+button that fixes it — Connect GitHub, Generate workflows, Create the CI key, Pin host keys,
+Sync config, automatic deploys on/off. Rows only a person can fix (`gh auth login`, the
+install token) show the command instead. Below: the three things only you can do on
+GitHub, **Redeploy what's running** to prove the setup end to end, and the workflow's recent
+runs.
+
+### Configure and Logs
+
+**Configure** — every setting for the selected environment, grouped, with help text, and
+what validation says about it at the top, re-read after every Save. The first section,
+*Deployment shape*, holds `MODE` — but it only sets **defaults**: `TLS_MODE`,
+`POSTGRES_MODE` and `REDIS_MODE` win wherever they are set explicitly. Switching an
+environment that is already deployed is a migration rather than a toggle — see
+[30-OPERATIONS.md](30-OPERATIONS.md#changing-an-environments-shape). Fields come from
+`webui/fields/*.toml` plus your `project/fields.toml`, filtered by mode. Save writes
+straight to the config files and nothing else — **Apply it →** takes you to *Apply a config
+change*. The image tag is not here: CI deploys the tag it built, and Operate deploys the
+one you pick.
+
+**Logs** — one button per host; streams `docker compose logs -f`.
+
+### How the buttons behave
+
+Every card shows the exact `deployctl` command it runs, where it acts (this machine, every
+host, GitHub, or GitHub Actions → every host) and what it leaves changed. Anything that
+changes what runs asks first, naming the environment, its hosts and the tag. Output
+streams into the pane on the right, and a toast says when a job ends.
 
 **The pane is a view, not the command.** Each action runs as a *job* that belongs to the
 panel process, not to the browser tab: clicking another card, reloading, switching
 environment or closing the tab only stops *watching*. The bar under the pane's header lists
 running and recent jobs; click one to replay its output and follow it live. `⏏ detach`
 stops following; `✕ cancel` (shown while a job runs) stops the command itself, part-way,
-after a confirmation. Actions that change a host or the rendered artifacts run one at a
-time per environment: starting a second is refused with the name of the one running. Read-
-only actions — Status, Doctor, Validate — run alongside it. (Before this, the command lived
-inside the stream: pressing Status during an Update killed the Update.)
+after a confirmation. Actions that change a host or the rendered files run one at a time
+per environment: starting a second is refused with the name of the one running.
 
 Actions that do not apply are absent rather than disabled: `ssl` only on a Let's Encrypt
 environment, `migrate` only when the project has a migration command. Step numbers close up
-behind anything hidden, so a cluster's flow reads 1-2-3-4-5-6 with no gap where the TLS step
-would have been.
-
-The whitelist and the arrangement live in `webui/panel/actions.py`; the arrangement carries
-no authority, so a flow can never render a button `/run` would refuse.
-
-**Logs** — one button per host; streams `docker compose logs -f`.
-
-**Terminals** — opens your real OS terminal (Terminal.app, or a Linux emulator), either in
-`deployctl/` or ssh'd into a host with your own agent and keys. No shell runs inside the
-page.
-
-**Tutorial** — the whole path from a bare server to a running deployment, in order. It is
-not a copy of `docs/`: every command is rendered with *this* environment's real values —
-deploy user, `REMOTE_DIR`, domain, host addresses, image repository — so the blocks are
-pasteable without editing, which is the difference between a step that works and one that
-gets typed wrong at 2am. Where a step is something the panel can already do, it renders the
-same whitelisted action button the Deploy tab uses, so the walkthrough performs the deploy
-rather than describing it.
-
-The toggle at the top switches between the single-server and cluster paths; it starts on
-the environment's configured `MODE` and hides the steps that do not apply, so nobody
-follows a load-balancer instruction on a one-machine deployment. Everything on the page is
-static except those buttons — it reads fine with no configuration filled in yet, which is
-when it is most useful.
-
-The environment picker in the top bar switches everything; the chips beside it show mode,
-TLS, domain, image and host count, plus a count of configuration errors if there are any.
-
----
-
-## The recommended flow
-
-If this is the first deployment, open **Tutorial** and follow it top to bottom — it covers
-the server bootstrap that has to happen before any of the below works. Afterwards, the
-Deploy tab *is* the procedure: open it and work the top rail left to right.
-
-1. **Configure** → *Application image* → fetch tags → click the newest → **Save**.
-2. **Deploy** → **Regenerate** → **Validate** → **Doctor**, in that order. None of the
-   three changes a running deployment; each catches what the next assumes.
-3. **Deploy** → **Update**, and watch the output pane.
-4. **Status**, to confirm every host reports the tag you intended.
-
-Regenerate is safe to run at any time: secrets are minted once and reused, so it never
-invalidates sessions.
-
-Why that order, and what to edit when a release changes more than the tag:
-[30-OPERATIONS.md § Rolling out an update](30-OPERATIONS.md#rolling-out-an-update).
+behind anything hidden. The whitelist and the arrangement live in `webui/panel/actions.py`;
+the arrangement carries no authority, so no tab can render a button `/run` would refuse.
 
 ---
 

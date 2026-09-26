@@ -94,51 +94,28 @@ drives your SSH keys, so never expose the port.
 
 ## Then, in the browser
 
-**0 · Tutorial** *(first deployment only)* — the whole path from a bare VPS, droplet or EC2
-instance to a running deployment, in order: what to install on the server, the deploy user
-and its permissions, the cloud pieces a cluster needs, then configure and deploy. Every
-command is rendered with your own values, and the steps the panel can perform have a Run
-button on them. Skip to **1** if your servers are already bootstrapped.
+The panel follows the project's journey — **Server → First deploy → CI/CD → Live** — and
+the stepper under the top bar always names the next step.
 
-**1 · Configure** — fill in the sections and press **Save**. The form adapts to the
-environment's shape: a single-server environment shows TLS and containerized database
-settings, a cluster shows the host list with a "primary" selector. Required fields are
-marked; help text sits under each input. Saving writes the same `config/*.env` files the
-CLI reads — there is no hidden state.
+**Setup** *(once per server)* — the root script that prepares a fresh server, rendered with
+this environment's values; the configuration still missing; then the first deploy as a
+numbered rail: pick the tag CI published, Regenerate → Validate → Doctor → Init → SSL →
+Status. Everything before Init changes nothing on a server.
 
-**2 · Set the image tag** — in *Application image*, press **fetch tags from the registry**
-and click the newest, then **Save**. (Nothing published yet? Run `deployctl ci init` for
-a GitHub Actions workflow, or `deployctl image push` to build from this machine.)
+**CI/CD** *(once per repository)* — `deployctl ci doctor` as a checklist, each row with the
+button that fixes it: connect GitHub, generate the workflows, create the CI key, pin the
+host keys, sync the config, turn automatic deploys on.
 
-**3 · Deploy** — the tab is laid out as the procedure itself: a numbered rail you work left
-to right, where each step assumes the previous one passed.
+**Operate** *(every day)* — shipping is a merge. What remains is here: what each host runs
+and who shipped it, deploying or rolling back a tag through GitHub, the release history
+with **Roll back to this**, putting a config change live, backups and a shell. Deploying
+straight from this machine is folded under **Emergency**.
 
-```
-First deployment
-  1 Fill in config → 2 Regenerate → 3 Validate → 4 Doctor → 5 Init → 6 SSL: obtain → 7 Status
-      (you edit)        (local)       (local)     (reads)   (deploys)  (single only)
+**Configure** — every setting as a form, validated as you save. **Logs** — follow a host.
 
-Roll out a new version                                                    ← the everyday one
-  1 Set image tag  → 2 Regenerate → 3 Validate → 4 Doctor → 5 Update → 6 Status
-      (you edit)        (local)       (local)     (reads)   (rolling)
-```
-
-Steps 2–4 change nothing on any server; the deploying step is the first that does. Below
-the rails sit the groups that genuinely have no order — **Check & observe**, **Recover**,
-and **Take it down** — drawn as plain grids so the difference between "do these in turn"
-and "run whichever you need" is visible at a glance.
-
-Output streams live into the pane on the right (drag its edge to resize), and every card
-shows the exact `deployctl` command it runs, whether it touches a host, and what it leaves
-changed — so anything you see, you can reproduce in a terminal.
-
-**4 · TLS** *(single-server only)* — after the first `Init`, run **SSL: obtain**. Until
-then the site is serving a self-signed placeholder certificate. Cluster deployments
-terminate TLS at the load balancer instead, so the action is hidden there.
-
-That is a complete first deployment. **Day to day it is two clicks:** pick a new tag in
-*Application image*, then **Update**. **Rollback** returns to the previously deployed tag,
-and **Backup now** dumps the database.
+Every card shows the exact `deployctl` command it runs, where it acts and what it leaves
+changed, and output streams live into the pane on the right — anything you see, you can
+reproduce in a terminal.
 
 Full details — the action whitelist, how secrets are handled, what the panel deliberately
 cannot do: **[docs/50-WEBUI.md](docs/50-WEBUI.md)**.
@@ -287,7 +264,7 @@ troubleshooting table. The rest is depth to come back for:
 4. **[30-OPERATIONS.md](docs/30-OPERATIONS.md)** — day two: rolling updates (what to edit, in what order), rollback, backups, `/docs` auth, troubleshooting.
    **[35-CONTINUOUS-DEPLOYMENT.md](docs/35-CONTINUOUS-DEPLOYMENT.md)** — deploy on merge from GitHub Actions: keys, the config secret, rollback.
 5. **[40-ADOPTING-A-NEW-PROJECT.md](docs/40-ADOPTING-A-NEW-PROJECT.md)** — setting up a new repository, or moving one off a copied-in deployctl.
-6. **[50-WEBUI.md](docs/50-WEBUI.md)** — the control panel, its Deploy tab, and its safety model.
+6. **[50-WEBUI.md](docs/50-WEBUI.md)** — the control panel, its tabs, and its safety model.
 7. **[60-COMMAND-REFERENCE.md](docs/60-COMMAND-REFERENCE.md)** — every command and flag, checked against the CLI by a test.
 
 ## Working on deployctl

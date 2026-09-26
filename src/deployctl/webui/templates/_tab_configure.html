@@ -1,0 +1,112 @@
+{#-
+  Configure — the config/*.env files as a form. Save writes the same files the CLI
+  reads; nothing leaves this machine until a deploy (or Sync config) sends it.
+  What validation says sits at the top and is re-read after every Save.
+-#}
+<section class="pane{% if landing == 'configure' %} active{% endif %}" id="pane-configure" role="tabpanel" aria-labelledby="tab-configure">
+  <div id="problems">{% include "_problems.html" %}</div>
+
+  <form id="cfgForm">
+    {% for sec in sections %}
+    <details class="card" id="sec-{{ sec.id }}" {% if loop.index <= 3 %}open{% endif %}>
+      <summary>
+        <span class="arrow">▶</span>
+        <span class="tw">{{ sec.title }}</span>
+        <span class="sdesc">{{ sec.desc }}</span>
+      </summary>
+      <div class="card-body">
+        {% if sec.special == 'hosts' %}
+        <div id="hostRows">
+          {% for h in hosts %}
+          <div class="host-row">
+            <input type="text" name="host_ip" value="{{ h }}" placeholder="10.0.0.10" class="mono" aria-label="Host address">
+            <label class="pri"><input type="radio" name="primary_index" value="{{ loop.index0 }}"
+                  {% if h == primary %}checked{% endif %}> primary</label>
+            <button type="button" class="iconbtn" data-act="remove-host" title="Remove" aria-label="Remove host">✕</button>
+          </div>
+          {% endfor %}
+          {% if not hosts %}
+          <div class="host-row">
+            <input type="text" name="host_ip" value="" placeholder="10.0.0.10" class="mono" aria-label="Host address">
+            <label class="pri"><input type="radio" name="primary_index" value="0" checked> primary</label>
+            <button type="button" class="iconbtn" data-act="remove-host" title="Remove" aria-label="Remove host">✕</button>
+          </div>
+          {% endif %}
+        </div>
+        <button type="button" class="btn ghost sm" data-act="add-host">+ Add host</button>
+        <div class="hint block">
+          The primary runs the scheduler and database migrations. It must be one of the rows above.
+        </div>
+        {% endif %}
+
+        <div class="grid">
+          {% for f in sec.fields %}
+          <div class="field {% if f.wide %}full{% endif %}">
+            <label for="f-{{ f.key }}">{{ f.label }}{% if f.required %} <span class="req">*</span>{% endif %}
+              {% if f.secret and f.has_value %}<span class="saved-badge">saved</span>{% endif %}
+              {#- An (i) only where the field has a guide: "where do I get this?"
+                  is a different question from what the hint answers, and the
+                  answer is too long to leave sitting under the input. -#}
+              {% if f.guide %}
+              <button type="button" class="infobtn" data-act="guide"
+                      data-guide="guide-{{ f.key }}"
+                      title="Where do I get this?"
+                      aria-label="Where do I get {{ f.label }}?">i</button>
+              {% endif %}
+            </label>
+            {% if f.type == 'select' %}
+            <select id="f-{{ f.key }}" name="{{ f.key }}">
+              {% for opt in f.options %}
+              <option value="{{ opt }}" {% if f.value == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+            {% elif f.type == 'password' %}
+            <input id="f-{{ f.key }}" type="password" name="{{ f.key }}" value="" autocomplete="off"
+                   placeholder="{{ '(saved — leave blank to keep)' if f.has_value else f.placeholder }}">
+            {% elif f.type == 'number' %}
+            <input id="f-{{ f.key }}" type="number" name="{{ f.key }}" value="{{ f.value }}" placeholder="{{ f.placeholder }}">
+            {% else %}
+            <input id="f-{{ f.key }}" type="text" name="{{ f.key }}" value="{{ f.value }}" placeholder="{{ f.placeholder }}">
+            {% endif %}
+            {% if f.help %}<span class="hint">{{ f.help }}</span>{% endif %}
+            {#- The modal itself. Rendered server-side next to its field rather
+                than assembled in JS: the CSP forbids inline script, and Jinja
+                escapes the text for us. Every button in here is type="button"
+                — this sits inside the config <form>, and a default-type button
+                would submit it. -#}
+            {% if f.guide %}
+            <dialog class="guide" id="guide-{{ f.key }}" aria-label="{{ f.guide.title }}">
+              <div class="guide-body">
+                <div class="guide-head">
+                  <h3>{{ f.guide.title }}</h3>
+                  <button type="button" class="guide-x" data-act="guide-close"
+                          aria-label="Close">×</button>
+                </div>
+                <ol class="guide-steps">
+                  {% for step in f.guide.steps %}<li>{{ step }}</li>{% endfor %}
+                </ol>
+                {% if f.guide.link %}
+                <a class="guide-link" href="{{ f.guide.link }}"
+                   target="_blank" rel="noopener noreferrer">{{ f.guide.link_label }} ↗</a>
+                {% endif %}
+                {% if f.guide.note %}<p class="guide-note">{{ f.guide.note }}</p>{% endif %}
+              </div>
+            </dialog>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </details>
+    {% endfor %}
+
+    <div class="footer">
+      <button type="submit" class="btn">Save</button>
+      <button type="button" class="btn ghost" data-act="preview">Preview resolved config</button>
+      <span id="saveResult" class="hint">
+        Saving writes the same <code>config/*.env</code> files the CLI reads. Nothing leaves this machine
+        until you apply it (Operate → Apply a config change).
+      </span>
+    </div>
+  </form>
+</section>

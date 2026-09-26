@@ -1,3 +1,3 @@
 """deployctl — deploy containerized apps to one server or a fleet over SSH."""
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from .. import checks, ui
+from .. import checks, tags, ui
 from ..config import Problem
 from ..context import env_option, load_config
 
@@ -33,6 +33,14 @@ def validate(
     cfg = load_config(env, require_valid=False)
     ui.header(f"Validate — {cfg.env}")
     ui.info(f"configuration sources: {' → '.join(cfg.sources) or 'defaults only'}")
+    # The rendered files are checked against the tag they were rendered with —
+    # which `setup` remembers — never against a tag from somewhere else.
+    try:
+        tag, source = tags.resolve(cfg, None, from_hosts=False)
+        ui.info(f"image tag {tag}  ({source})")
+    except tags.NoTag:
+        ui.warn(f"no image tag rendered on this machine yet — the image checks are skipped "
+                f"(render with: deployctl setup --env {cfg.env} --tag <tag>)")
     print()
 
     errors, warnings = _report("Configuration", cfg.validate())
