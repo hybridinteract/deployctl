@@ -102,7 +102,7 @@ deployctl server bootstrap-script --env production > bootstrap.sh
 Paste it into each droplet's user data when you create it, or run it:
 `ssh root@<host-ip> 'bash -s' < bootstrap.sh`. Docker, a `deploy` user in the `docker`
 group with your key, `REMOTE_DIR` owned by it, swap, key-only ssh, UTC — the steps of
-[10-SINGLE-SERVER.md](10-SINGLE-SERVER.md#1-bootstrap-the-host-once-by-hand), as one script.
+[10-SINGLE-SERVER.md](10-SINGLE-SERVER.md#2-bootstrap-the-host-once-as-root), as one script.
 
 Verify each one:
 
@@ -178,10 +178,10 @@ if you mount the provider's CA into your image.
 deployctl ci init --branch main       # then enable read/write workflow permissions
 git push                               # → the run Summary prints the image tag
 
-deployctl setup    --env production
+deployctl setup    --env production --tag <tag>
 deployctl validate --env production
-deployctl doctor   --env production   # every host: ssh, docker, permissions, image, arch
-deployctl deploy init --env production --tag <tag>
+deployctl deploy doctor --env production --tag <tag>   # every host: ssh, docker, permissions, image, arch
+deployctl deploy init   --env production --tag <tag>
 ```
 
 Verify through the load balancer, not a host:

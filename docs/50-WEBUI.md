@@ -7,7 +7,7 @@ deploying or rolling back a tag, putting a config change live — happens in **O
 ## Start it
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.11.0   # once per machine
+uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0   # once per machine
 deployctl webui               # → http://127.0.0.1:8765
 ```
 

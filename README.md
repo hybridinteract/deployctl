@@ -5,12 +5,15 @@ GitHub Actions, or from a control panel in your browser.**
 
 Point it at your servers and it runs the whole release: render the configuration, ship it
 over SSH, pull the image, migrate the database, then restart each host one at a time behind
-a health check — stopping the moment a host fails to come back.
+a health check and a watch on every service — and if a host fails, put it and every host
+already moved back on the release before.
 
 It handles **one server** or **N servers behind a load balancer** from the same
-configuration. The **control panel is the main way in**: a local web UI where you fill in
-the settings, pick an image and press Deploy. Everything it does is also a CLI command, so
-you can script or automate later without learning a second tool.
+configuration. **Once set up, a release is a merge**: GitHub Actions runs deployctl on every
+push to your deploy branch, with a CI-only key and your configuration as a secret — the
+same engine you can run from your laptop, sharing one lock. The **control panel** walks a
+new project there (prepare the server, first deploy, CI/CD) and is where you see what runs
+and roll back. Everything it does is also a CLI command.
 
 What a server needs: **Docker, an SSH user, a writable directory.** That is all — no source
 code, no build toolchain, no git checkout. Images are built by CI (or your machine) and
@@ -27,7 +30,7 @@ every detail spelled out, plus a troubleshooting table:
 ### 1 · Install the tool
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.9.0
+uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0
 deployctl --version
 ```
 
@@ -128,18 +131,19 @@ Everything above is a command. Use these for scripting, CI, or when you want the
 invocation in your shell history:
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.9.0   # once per machine
+uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0   # once per machine
 deployctl init --mode single            # or --mode cluster; creates deploy/
 $EDITOR deploy/config/common.env          # project name, domain, image repo
 $EDITOR deploy/config/production.env      # hosts, database, TLS
 $EDITOR deploy/project/project.env        # how to run YOUR app
 
-deployctl ci init                       # GitHub Actions → registry (or: image push)
-deployctl setup    --env production     # render generated/
-deployctl validate --env production     # lint config + artifacts
-deployctl doctor   --env production     # can we reach every host?
-deployctl deploy init --env production  # first bring-up
-deployctl ssl setup   --env production  # single-server TLS only
+deployctl ci init --env production      # GitHub Actions builds the image; push → note its tag
+deployctl server bootstrap-script --env production | ssh root@<server-ip> 'bash -s'   # once per new server
+deployctl setup    --env production --tag <tag>          # render generated/
+deployctl validate --env production                      # lint config + artifacts
+deployctl deploy doctor --env production --tag <tag>     # can every host run it?
+deployctl deploy init   --env production --tag <tag>     # first bring-up
+deployctl ssl setup     --env production                 # single-server TLS only
 ```
 
 Then day to day:

@@ -3,6 +3,41 @@
 Versions are git tags (`vX.Y.Z`); projects install one with
 `uv tool install git+ssh://git@github.com/hybridinteract/deployctl@vX.Y.Z`.
 
+## 0.12.0
+
+Every command the docs and the tool show you now runs, and the guides describe CI/CD as the
+way releases happen.
+
+**Fixed**
+- `deployctl doctor` — which has never existed; the command is `deploy doctor` — was in
+  the "Next steps" `deployctl init` prints and in seven guides. `init`'s next steps also
+  ran `setup` without `--tag`, which fails on a new project since 0.10, and pointed at a
+  `deployctl/docs/` path from the copied-in layout. They now work as printed, and point at
+  the panel's Setup and CI/CD tabs.
+- `validate` advised "port 22 from your IP only" for clusters, which locks CI out. It now
+  says what CI needs: key-only and open, or a tailnet or jump host.
+- The bootstrap script's messages referred to steps of a Tutorial tab that no longer
+  exists.
+
+**Guarded**
+- A test reads every `deployctl …` in the README, the guides and the tool's own hints, and
+  fails on a command or option the CLI does not have.
+- A test resolves every link between the docs, section anchors included.
+- A test holds every install command in the docs to the current version (several still
+  installed v0.9.0).
+
+**Docs**
+- `10-SINGLE-SERVER`: configure first, then the bootstrap script instead of a manual root
+  session; a firewall that lets CI in; the first deploy with its tag; a new *Deploy on
+  every merge* step; day two as merges, the Operate tab and `ci deploy`.
+- `00-CONCEPTS`: the control machine is CI's deploy job, or your laptop; a failed release
+  reverts across the fleet; the host-side state files (`.deployctl-state`, the history,
+  `.previous/`, the lock).
+- `30-OPERATIONS`: rollback through GitHub first; nothing is written into `config/`.
+- `35-CONTINUOUS-DEPLOYMENT`: the panel button beside each command.
+- `40-ADOPTING`: after `adopt`, `migrate-config` and `ci init --force`; after an upgrade,
+  regenerate the workflows — CI runs the version its workflow pins.
+
 ## 0.11.0
 
 The control panel, rebuilt around continuous deployment.

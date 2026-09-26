@@ -55,12 +55,16 @@ def validate(
         print(f"  • DNS: A {cfg.derived['API_DOMAIN']} → the LOAD BALANCER's IP, not a host")
         print("  • Add EVERY host to BOTH databases' trusted sources — adding them to Postgres but")
         print("    not Redis is the classic failure: the API is healthy while Celery never connects")
-        print("  • Firewall: port 80 from the load balancer, port 22 from your IP only")
+        print("  • Firewall: port 80 from the load balancer only")
     if cfg.derived["TLS_LE"]:
         ui.info("Reminders for this shape:")
         print(f"  • DNS: A {cfg.derived['API_DOMAIN']} → {cfg.hosts[0] if cfg.hosts else 'this server'}")
         print("  • Ports 80 and 443 must be open; certbot needs 80 for the ACME challenge")
         print(f"  • Certificates live on the server at {cfg.remote_dir}/certbot and are never overwritten by a deploy")
+    if cfg.derived["TLS_LB"] or cfg.derived["TLS_LE"]:
+        # Not "22 from your IP only": CI deploys over ssh too, from addresses that change.
+        print("  • Port 22: key-only, open to you and to CI — GitHub's runners have no fixed addresses —")
+        print("    or closed to the internet and reached over a tailnet or SSH_JUMP_HOST")
     if cfg.derived["WITH_POSTGRES"]:
         print("  • The database is a container volume on this one server — back it up (deployctl backup run)")
     print()

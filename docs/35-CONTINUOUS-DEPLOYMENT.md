@@ -28,20 +28,21 @@ CI always agree on "the previous release".
 
 ## Setting it up — one command per step
 
-Run these from the application's repository, with `gh` logged in (`gh auth login`). After
-each, `deployctl ci doctor` shows what is left.
+Run these from the application's repository, with `gh` logged in (`gh auth login`) — or
+press the same buttons on the panel's **CI/CD** tab, which is `ci doctor` as a checklist
+with each row's fix beside it. After each, `deployctl ci doctor` shows what is left.
 
-| # | Command | What it does |
-|---|---|---|
-| 1 | `deployctl ci connect --env production --branch prod` | Finds the repository and its plan, decides where secrets live (`CI_SCOPE`), saves the deploy branch |
-| 2 | `deployctl ci init --env production` | Writes `build-image.yml` and `deploy.yml` (managed), and `ci.yml` if there is none (yours) |
-| 3 | `deployctl ci setup-key --env production` | A CI-only ssh key: installed on every host and the jump host, proven, private half into GitHub, local copy deleted |
-| 4 | `deployctl ci pin-hosts --env production` | The host keys your machine already trusts, into GitHub — CI refuses any other |
-| 5 | `deployctl ci sync-config --env production` | Your `config/` into GitHub as one secret plus its digest |
-| 6 | `deployctl ci doctor --env production` | Everything above, checked |
-| 7 | commit and push the workflows | the deploy workflow must be on the default branch and the deploy branch |
-| 8 | `deployctl ci deploy --env production` | A first deploy by hand — the running tag, so nothing changes but the proof |
-| 9 | `deployctl ci auto-deploy on --env production` | From now on a merge deploys itself |
+| # | Command | Panel (CI/CD tab) | What it does |
+|---|---|---|---|
+| 1 | `deployctl ci connect --env production --branch prod` | Connect GitHub | Finds the repository and its plan, decides where secrets live (`CI_SCOPE`), saves the deploy branch (the panel's Configure → *Deploy branch*) |
+| 2 | `deployctl ci init --env production` | Generate workflows | Writes `build-image.yml` and `deploy.yml` (managed), and `ci.yml` if there is none (yours) |
+| 3 | `deployctl ci setup-key --env production` | Create the CI key | A CI-only ssh key: installed on every host and the jump host, proven, private half into GitHub, local copy deleted |
+| 4 | `deployctl ci pin-hosts --env production` | Pin host keys | The host keys your machine already trusts, into GitHub — CI refuses any other |
+| 5 | `deployctl ci sync-config --env production` | Sync config | Your `config/` into GitHub as one secret plus its digest |
+| 6 | `deployctl ci doctor --env production` | the checklist itself | Everything above, checked |
+| 7 | commit and push the workflows | — | the deploy workflow must be on the default branch and the deploy branch |
+| 8 | `deployctl ci deploy --env production` | Redeploy what's running | A first deploy through GitHub — the running tag, so nothing changes but the proof |
+| 9 | `deployctl ci auto-deploy on --env production` | Automatic deploys → Turn on | From now on a merge deploys itself |
 
 Two things only you can do, once, on GitHub:
 
@@ -89,14 +90,15 @@ GitHub's runners connect from a large, changing set of addresses. Three ways in:
 
 ## Day to day
 
-| You want to | Do |
-|---|---|
-| Ship code | Merge into the deploy branch. |
-| Change config (a key, a worker count) | Panel → Save, or edit `config/` → `deployctl ci sync-config` → `deployctl ci deploy --allow-config-change` (redeploys the running tag with the new config). |
-| Ship code that needs a new key | The config change first (row above), then merge. |
-| Roll back | `deployctl ci deploy --rollback` — the release before the running one; never migrates. `--tag T` for a specific one. |
-| See what happened | `deployctl ci runs`, and `deployctl deploy history` for what each release was and who shipped it. |
-| Deploy with GitHub down | `deployctl deploy update --tag T` from a laptop with the config — same engine, same lock. It refuses a tag older than the running one. |
+| You want to | Command | Panel (Operate tab) |
+|---|---|---|
+| Ship code | Merge into the deploy branch. | — |
+| Change config (a key, a worker count) | edit `config/` → `deployctl ci sync-config` → `deployctl ci deploy --allow-config-change` (redeploys the running tag with the new config) | Configure → Save → *Apply a config change*: Sync config → Deploy the change |
+| Ship code that needs a new key | The config change first (row above), then merge. | the same |
+| Deploy a specific tag | `deployctl ci deploy --tag T` | *Deploy a version* → Deploy |
+| Roll back | `deployctl ci deploy --rollback` — the release before the running one; never migrates. `--tag T` for a specific one. | *Deploy a version* → Roll back, or *Releases* → Roll back to this |
+| See what happened | `deployctl ci runs`, and `deployctl deploy history` for what each release was and who shipped it | *Running now* and *Releases*; recent runs on the CI/CD tab |
+| Deploy with GitHub down | `deployctl deploy update --tag T` from a laptop with the config — same engine, same lock. It refuses a tag older than the running one. | *Emergency* (folded) |
 
 **If you forget `sync-config`** after a config change, nothing is silently reverted: the
 workflow refuses to change any value the hosts run with and names the keys.

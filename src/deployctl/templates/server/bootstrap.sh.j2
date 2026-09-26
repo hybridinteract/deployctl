@@ -40,7 +40,7 @@ EXTRA_AUTHORIZED_KEYS=""
 # because the permission fixes in "When it breaks" need it.
 HARDEN_SSH=«HARDEN_SSH»
 
-# A kernel upgrade in B1 only takes effect after a reboot. First boot is the one
+# A kernel upgrade in step 1 only takes effect after a reboot. First boot is the one
 # moment nothing is running yet, so take it now rather than mid-deploy later.
 REBOOT_IF_REQUIRED=«REBOOT»
 
@@ -72,27 +72,27 @@ log "starting deployctl host bootstrap ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
 # so stop here instead of building a server nobody can deploy to.
 # ---------------------------------------------------------------------------
 if [[ ! -s /root/.ssh/authorized_keys && -z "$EXTRA_AUTHORIZED_KEYS" ]]; then
-    die "no SSH keys found — recreate the droplet with an SSH key selected (Tutorial A1)"
+    die "no SSH keys found — recreate the server with an SSH key selected, or set EXTRA_AUTHORIZED_KEYS above"
 fi
 
 # ---------------------------------------------------------------------------
-# B1. Update the system, keeping existing config files on conflicts.
+# 1. Update the system, keeping existing config files on conflicts.
 # ---------------------------------------------------------------------------
-log "B1: updating packages"
+log "updating packages"
 apt_get update -q
 apt_get upgrade -y -q
 # rsync: every deploy syncs artifacts with it. cron: `deployctl backup schedule`.
 apt_get install -y -q ca-certificates curl rsync cron unattended-upgrades fail2ban
 
 # ---------------------------------------------------------------------------
-# B2. Docker Engine + the compose plugin, from Docker's apt repository.
+# 2. Docker Engine + the compose plugin, from Docker's apt repository.
 #
-# The Tutorial uses get.docker.com by hand; Docker does not recommend that script
+# Not get.docker.com: Docker does not recommend that script
 # for production, and the repository keeps Docker on the normal `apt upgrade`
 # path. Same result: `docker compose` with a space, no legacy docker-compose.
 # ---------------------------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
-    log "B2: installing Docker"
+    log "installing Docker"
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
     chmod a+r /etc/apt/keyrings/docker.asc
@@ -109,19 +109,19 @@ EOF
     # No buildx: servers only pull, they never build.
     apt_get install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin
 else
-    log "B2: Docker already installed"
+    log "Docker already installed"
 fi
 systemctl enable --now docker
-log "B2: $(docker --version) · $(docker compose version)"
+log "$(docker --version) · $(docker compose version)"
 
 # ---------------------------------------------------------------------------
-# B3. The deploy user: unprivileged, in the docker group, no sudo.
+# 3. The deploy user: unprivileged, in the docker group, no sudo.
 # ---------------------------------------------------------------------------
 if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
-    log "B3: creating user $DEPLOY_USER"
+    log "creating user $DEPLOY_USER"
     adduser --disabled-password --gecos "" "$DEPLOY_USER"
 else
-    log "B3: user $DEPLOY_USER already exists"
+    log "user $DEPLOY_USER already exists"
 fi
 usermod -aG docker "$DEPLOY_USER"
 
@@ -142,26 +142,26 @@ done
 # Not optional: sshd silently ignores a key file others can read.
 chown "$DEPLOY_USER:$DEPLOY_USER" "$keys_file"
 chmod 600 "$keys_file"
-log "B3: $(grep -c . "$keys_file") key(s) authorized for $DEPLOY_USER"
+log "$(grep -c . "$keys_file") key(s) authorized for $DEPLOY_USER"
 
 # ---------------------------------------------------------------------------
-# B4. The deploy directory, owned by the deploy user — all of it.
+# 4. The deploy directory, owned by the deploy user — all of it.
 # ---------------------------------------------------------------------------
-log "B4: $REMOTE_DIR owned by $DEPLOY_USER"
+log "$REMOTE_DIR owned by $DEPLOY_USER"
 install -d -m 755 "$REMOTE_DIR"
 chown -R "$DEPLOY_USER:$DEPLOY_USER" "$REMOTE_DIR"
 
 # ---------------------------------------------------------------------------
-# B5. Swap — a safety net so an image pull cannot get Postgres OOM-killed.
+# 5. Swap — a safety net so an image pull cannot get Postgres OOM-killed.
 # ---------------------------------------------------------------------------
 if ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
-    log "B5: adding $SWAP_SIZE swap"
+    log "adding $SWAP_SIZE swap"
     [[ -f /swapfile ]] || fallocate -l "$SWAP_SIZE" /swapfile
     chmod 600 /swapfile
     mkswap /swapfile >/dev/null
     swapon /swapfile
 else
-    log "B5: swap already active"
+    log "swap already active"
 fi
 grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 # Only swap under real pressure; the default of 60 pages the database out early.
@@ -169,15 +169,15 @@ echo 'vm.swappiness=10' > /etc/sysctl.d/60-deployctl-swap.conf
 sysctl -q -p /etc/sysctl.d/60-deployctl-swap.conf
 
 # ---------------------------------------------------------------------------
-# B6. Firewall: the DigitalOcean cloud firewall, NOT ufw.
+# 6. Firewall: the DigitalOcean cloud firewall, NOT ufw.
 #
 # Docker publishes ports around ufw anyway, and running both is how people lock
 # themselves out. Nothing to do here except make sure ufw stays off.
 # ---------------------------------------------------------------------------
 if ufw status 2>/dev/null | grep -q 'Status: active'; then
-    log "B6: WARNING ufw is active — the Tutorial expects it inactive (use the cloud firewall)"
+    log "WARNING ufw is active — deployctl expects it inactive (use the cloud firewall)"
 else
-    log "B6: ufw inactive, as expected — attach a cloud firewall: «FIREWALL»"
+    log "ufw inactive, as expected — attach a cloud firewall: «FIREWALL»"
 fi
 
 # ---------------------------------------------------------------------------
@@ -214,7 +214,7 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# Done. Print what the next steps need, then reboot if B1 asked for it.
+# Done. Print what the next steps need, then reboot if step 1 asked for it.
 # ---------------------------------------------------------------------------
 touch /var/lib/deployctl-bootstrap.done
 

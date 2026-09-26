@@ -19,7 +19,7 @@ optional and nothing here is ambiguous — run the blocks in order, top to botto
 ## Step 1 · Install the tool
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.9.0
+uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0
 deployctl --version
 ```
 
@@ -127,18 +127,19 @@ Deploy the change). Deploying from this machine is still there, folded under
 Every button above is a command. Use these for scripting, CI, or an audit trail:
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.9.0   # once per machine
+uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0   # once per machine
 deployctl init --mode single --env production
 $EDITOR deploy/config/common.env               # project name, domain, image repo
 $EDITOR deploy/config/production.env           # hosts, database, TLS
-$EDITOR project/project.env                    # how to run YOUR app
+$EDITOR deploy/project/project.env             # how to run YOUR app
 
-deployctl ci init                            # GitHub Actions → registry
-deployctl setup    --env production          # render generated/
-deployctl validate --env production          # lint config + artifacts
-deployctl doctor   --env production          # can we reach every host?
-deployctl deploy init --env production       # first bring-up
-deployctl ssl setup   --env production       # single-server TLS only
+deployctl ci init --env production                     # GitHub Actions builds the image; push → its tag
+deployctl server bootstrap-script --env production | ssh root@<server-ip> 'bash -s'   # new server only
+deployctl setup    --env production --tag <tag>        # render generated/
+deployctl validate --env production                    # lint config + artifacts
+deployctl deploy doctor --env production --tag <tag>   # can every host run it?
+deployctl deploy init   --env production --tag <tag>   # first bring-up
+deployctl ssl setup     --env production               # single-server TLS only
 ```
 
 Then for each release:
@@ -157,7 +158,7 @@ run, without touching a host.
 
 | Symptom | Do this |
 |---|---|
-| `deployctl: command not found` | Step 1 — `uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.9.0`, and make sure uv's tool directory is on your PATH (`uv tool update-shell`). |
+| `deployctl: command not found` | Step 1 — `uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0`, and make sure uv's tool directory is on your PATH (`uv tool update-shell`). |
 | Commands act on the wrong project | They use the nearest `deploy/` above the current directory. Check with `deployctl envs`, or pass `--project-dir`. |
 | `no environments configured` | Step 2 has not been run. |
 | Panel says `port 8765 is already in use` | `deployctl webui --restart` |
