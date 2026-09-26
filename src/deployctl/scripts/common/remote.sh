@@ -32,7 +32,17 @@ if [[ "${DEPLOYCTL_SSH_STRICT:-}" == "1" ]]; then
 else
     _HOST_KEY_POLICY="accept-new"
 fi
-readonly SSH_OPTS="-o StrictHostKeyChecking=${_HOST_KEY_POLICY} -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# SSH_JUMP_HOST reaches hosts that are only on a private network through a
+# bastion (ssh's ProxyJump, e.g. deploy@bastion.example.com). Everything that
+# connects — ssh, rsync, the lock, the panel's terminal — goes through SSH_OPTS, so
+# setting it once covers all of them. Its own host key must be pinned too.
+_JUMP_OPT=""
+if [[ -n "${SSH_JUMP_HOST:-}" ]]; then
+    _JUMP_OPT=" -o ProxyJump=${SSH_JUMP_HOST}"
+fi
+# SSH_BASE_OPTS reaches the jump host itself; ProxyJump through it would loop.
+readonly SSH_BASE_OPTS="-o StrictHostKeyChecking=${_HOST_KEY_POLICY} -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+readonly SSH_OPTS="${SSH_BASE_OPTS}${_JUMP_OPT}"
 
 # Artifacts are scoped per environment, and generated/<env>/ mirrors REMOTE_DIR
 # exactly — which is what makes the compose file's ../ mounts resolve the same
@@ -504,16 +514,24 @@ revert_host() {
 readonly LOCK_DIR="${REMOTE_DIR}/.deployctl.lock"
 DEPLOY_LOCK_HELD=0
 
+# Who is changing the hosts, in one word: the Actions run's URL under CI — the
+# runner's own name is a throwaway VM, the URL shows the log — else user@machine.
+# Used by the lock, the state file and the history, so all three agree.
+deployer_identity() {
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-?}/actions/runs/${GITHUB_RUN_ID:-?}"
+    else
+        echo "$(id -un)@$(hostname -s 2>/dev/null || hostname)"
+    fi
+}
+
 acquire_deploy_lock() {
     local purpose="$1" me verdict
     [[ "${DEPLOYCTL_DRY_RUN:-}" == "1" ]] && return 0
     if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-        # "runner@fv-az123" names a throwaway VM. The run's URL is what someone
-        # locked out from their laptop needs: it shows the log, and whether it is
-        # still going.
-        me="GitHub Actions (${GITHUB_ACTOR:-?}) · ${purpose} · since $(date -u +%Y-%m-%dT%H:%M:%SZ) · ${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-?}/actions/runs/${GITHUB_RUN_ID:-?}"
+        me="GitHub Actions (${GITHUB_ACTOR:-?}) · ${purpose} · since $(date -u +%Y-%m-%dT%H:%M:%SZ) · $(deployer_identity)"
     else
-        me="$(id -un)@$(hostname -s 2>/dev/null || hostname) · ${purpose} · since $(date -u +%Y-%m-%dT%H:%M:%SZ) · pid $$"
+        me="$(deployer_identity) · ${purpose} · since $(date -u +%Y-%m-%dT%H:%M:%SZ) · pid $$"
     fi
     verdict="$(remote "$PRIMARY_HOST" "
         mkdir -p '${REMOTE_DIR}' 2>/dev/null
@@ -660,10 +678,24 @@ check_live_env() {
     return 1
 }
 
-# Record which tag runs on a host — what `deploy rollback` reads back.
+# Record which tag runs on a host — what `deploy rollback` reads back. The tag is
+# IMAGE_TAG unless given: a fleet revert records the one each host went back to.
 record_state() {
-    local host="$1"
-    remote_maybe "$host" "printf 'IMAGE_TAG=%s\nDEPLOYED_AT=%s\nENV=%s\n' '${IMAGE_TAG}' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" '${DEPLOYCTL_ENV}' > '${REMOTE_DIR}/${STATE_FILE}'"
+    local host="$1" tag="${2:-$IMAGE_TAG}"
+    remote_maybe "$host" "printf 'IMAGE_TAG=%s\nDEPLOYED_AT=%s\nDEPLOYED_BY=%s\nENV=%s\n' '${tag}' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" '$(deployer_identity)' '${DEPLOYCTL_ENV}' > '${REMOTE_DIR}/${STATE_FILE}'"
+}
+
+# ---- the history, kept on the primary ---------------------------------------------
+# One line per completed release of the environment, appended where every deploy
+# can see it — a laptop's own log never saw what CI deployed, so rollback picked
+# its "previous" tag from half the story. Tab-separated:
+#   <when> <env> <tag> <kind: deploy|rollback|init|host:ADDR> <who>
+# A release that failed and was reverted is not a release, and is not recorded.
+readonly HISTORY_FILE=".deployctl-history"
+
+append_history() {
+    local kind="$1"
+    remote_maybe "$PRIMARY_HOST" "printf '%s\t%s\t%s\t%s\t%s\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" '${DEPLOYCTL_ENV}' '${IMAGE_TAG}' '${kind}' '$(deployer_identity)' >> '${REMOTE_DIR}/${HISTORY_FILE}'"
 }
 
 read_state_tag() {

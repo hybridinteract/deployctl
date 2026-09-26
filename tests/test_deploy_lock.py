@@ -72,8 +72,12 @@ class TestRemoteLock:
         assert not (tmp_path / ".deployctl.lock").exists(), out
 
     def test_released_when_the_run_is_cancelled(self, tmp_path):
-        # Signalled the way the panel's Cancel does it: the whole process group.
-        proc = _bash('acquire_deploy_lock "deploy update"; echo HELD; sleep 30 & wait', tmp_path,
+        # Signalled the way the panel's Cancel does it: the whole process group,
+        # mid-step. HELD comes from the step itself, after its exec: until then a
+        # child forked by bash still runs bash's TERM trap handler, which swallows a
+        # TERM landing in that gap, and the step would then run its full 30s. (And
+        # not `sleep & wait`: bash 3.2 can crash on a TERM arriving as wait starts.)
+        proc = _bash('acquire_deploy_lock "deploy update"; sh -c "echo HELD; exec sleep 30"', tmp_path,
                      start_new_session=True)
         assert proc.stdout.readline().strip() == "HELD"
         assert (tmp_path / ".deployctl.lock").is_dir()

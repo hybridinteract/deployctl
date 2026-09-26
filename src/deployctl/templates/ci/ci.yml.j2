@@ -1,0 +1,52 @@
+# Written once by deployctl «VERSION» (`deployctl ci init`) — this file is YOURS:
+# ci init never overwrites it. Put your project's checks in the `checks` job.
+#
+# A push to «DEPLOY_BRANCH» runs the checks, then builds and publishes the image
+# (build-image.yml), then — with the repository variable AUTO_DEPLOY set to
+# 'true' — deploys that exact image (deploy.yml). Nothing is deployed that did
+# not pass the checks.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["«DEPLOY_BRANCH»"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@«ACTIONS.checkout» # «ACTIONS.checkout_version»
+        with:
+          persist-credentials: false
+      # Replace with your tests, lint, migration checks.
+      - run: echo "No checks yet — add your test command to .github/workflows/ci.yml"
+
+  publish:
+    name: Build & push image
+    needs: [checks]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/«DEPLOY_BRANCH»'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+
+  deploy:
+    name: Deploy to «ENV»
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/«DEPLOY_BRANCH»' && vars.AUTO_DEPLOY == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: «ENV»
+      tag: ${{ needs.publish.outputs.tag }}
+    secrets: inherit

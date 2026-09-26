@@ -24,6 +24,7 @@ deployctl = "deployctl.cli.main:main"
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",              # FastAPI's TestClient, for the panel tests
+    "pyyaml>=6.0",              # parsing the generated workflows in tests
 ]
 
 [tool.hatch.version]

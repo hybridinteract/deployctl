@@ -57,6 +57,9 @@ DEFAULTS = {
     "MODE": "single",
     "API_SUBDOMAIN": "api",
     "SSH_USER": "deploy",
+    # A bastion (ssh ProxyJump) for hosts that are only on a private network — the
+    # usual shape of a fleet behind a load balancer. Empty: connect directly.
+    "SSH_JUMP_HOST": "",
     "TLS_MODE": "letsencrypt",
     "POSTGRES_MODE": "container",
     "REDIS_MODE": "container",
@@ -96,6 +99,16 @@ DEFAULTS = {
     # a restart or an unhealthy turn before the release counts as good. The gate
     # probes only the api; a worker that crash-loops passes it. 0 skips the watch.
     "DEPLOY_SETTLE_SECONDS": "60",
+    # When a host fails mid-roll: `fleet` puts every host this run already moved
+    # back on its previous release too, so the fleet is never split between two;
+    # `host` reverts only the host that failed.
+    "REVERT_SCOPE": "fleet",
+    # CI/CD. Where GitHub holds this project's deploy secrets: `environment` (the
+    # GitHub environment named like this one — Team/Pro for a private repository)
+    # or `repository` (every plan). `deployctl ci connect` detects and writes it.
+    "CI_SCOPE": "",
+    # The branch whose pushes build and, with AUTO_DEPLOY on, deploy.
+    "DEPLOY_BRANCH": "main",
     "WITH_BEAT": "true",
     "ENABLE_DOCS": "false",
     "LOG_LEVEL": "WARNING",
@@ -338,7 +351,8 @@ class Config:
                 err(f"{key} must be one of {VALID_SERVICE_MODES} (got {raw[key]!r})")
 
         # -- identity and image
-        for key in ("PROJECT_NAME", "BASE_DOMAIN", "IMAGE_REPO", "IMAGE_TAG"):
+        # IMAGE_TAG is not among them: it is decided per command (cli/tags.py).
+        for key in ("PROJECT_NAME", "BASE_DOMAIN", "IMAGE_REPO"):
             if not raw.get(key):
                 err(f"{key} is required", f"set it in config/{self.env}.env or config/common.env")
             elif any(marker in raw[key] for marker in ("your-org", "your-app", "example.com", "CHANGE_THIS")):
@@ -359,10 +373,31 @@ class Config:
                 "docker login needs both; the token alone cannot authenticate",
             )
 
+        if self.raw_input.get("IMAGE_TAG") and not os.environ.get("IMAGE_TAG"):
+            warn(
+                f"IMAGE_TAG is set in config/ ({self.raw_input['IMAGE_TAG']}) — deprecated",
+                "once CI deploys, a tag in config is whatever this machine deployed last, and deploying it "
+                "can take the hosts backwards. The hosts' running tag is used instead; pass --tag to "
+                "choose one. Remove it with: deployctl migrate-config --apply",
+            )
         if raw.get("IMAGE_TAG") == "latest":
             warn(
                 "IMAGE_TAG=latest is a moving pointer",
                 "pin an immutable tag (a git short sha) so every host runs identical bits and rollback works",
+            )
+
+        # -- how deploys reach and treat the hosts
+        if raw["CI_SCOPE"] not in ("", "environment", "repository"):
+            err(f"CI_SCOPE must be 'environment' or 'repository' (got {raw['CI_SCOPE']!r})",
+                "deployctl ci connect detects the right one")
+        if not re.fullmatch(r"[A-Za-z0-9._/-]+", raw["DEPLOY_BRANCH"]):
+            err(f"DEPLOY_BRANCH {raw['DEPLOY_BRANCH']!r} is not a branch name")
+        if raw["REVERT_SCOPE"] not in ("fleet", "host"):
+            err(f"REVERT_SCOPE must be 'fleet' or 'host' (got {raw['REVERT_SCOPE']!r})")
+        if raw["SSH_JUMP_HOST"] and not re.fullmatch(r"[A-Za-z0-9@._:\[\]-]+(,[A-Za-z0-9@._:\[\]-]+)*", raw["SSH_JUMP_HOST"]):
+            err(
+                f"SSH_JUMP_HOST {raw['SSH_JUMP_HOST']!r} is not a [user@]host[:port] (commas chain several)",
+                "it is passed to ssh as ProxyJump; spaces and quotes are not allowed",
             )
 
         # -- hosts

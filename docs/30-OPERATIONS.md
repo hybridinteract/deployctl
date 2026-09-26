@@ -12,11 +12,9 @@ top of the Deploy tab, drawn in this order; from the CLI it is the same six step
 
 ### What you edit
 
-On a routine release, **exactly one value changes**:
-
-| Value | Where | Set it to |
-|---|---|---|
-| `IMAGE_TAG` | `config/<env>.env`, or *Application image* in the panel | The tag CI published — a git short SHA. Never `latest`. |
+On a routine release **nothing in `config/` changes**: the image tag is passed to the
+deploy (`--tag`, or by CI), never written down — a tag in a file is whatever that machine
+deployed last. Pick the tag CI published, a git short SHA; never `latest`.
 
 Everything else stays as it is. If you are *also* changing configuration — worker counts,
 a rate limit, a new application setting — edit it in the same pass, before step 1, so one
@@ -24,7 +22,7 @@ release carries both. Which file:
 
 | Changing | Edit | Notes |
 |---|---|---|
-| Image tag | `config/<env>.env` | The only edit a plain release needs. |
+| Image tag | nowhere — `--tag` on the deploy | Without it, a deploy redeploys the running tag. |
 | Project name, domain, registry | `config/common.env` | Shared by every environment. |
 | Hosts, TLS, database, limits | `config/<env>.env` | This environment only. |
 | Your app's own env keys | *Application settings* in the panel (writes `config/app.<env>.env`) | Declared in `project/fields.toml`. A value set there beats the template's default. |
@@ -45,15 +43,14 @@ values from the host's live `.env.<env>` instead.
 ```bash
 # 1. pick the tag
 deployctl image tags                          # what is in the registry
-$EDITOR config/<env>.env                        # set IMAGE_TAG
 
 # 2-4. checks — none of these change a running deployment
-deployctl setup    --env <env> --force        # re-render generated/ from the config
+deployctl setup    --env <env> --tag <tag> --force   # re-render generated/ with that tag
 deployctl validate --env <env>                # lint the config and the artifacts
 deployctl doctor   --env <env>                # every host: ssh, docker, dir, image, arch
 
 # 5. the release itself
-deployctl deploy update --env <env>           # rolling, one host at a time, health-gated
+deployctl deploy update --env <env> --tag <tag>   # rolling, health-gated, reverted on failure
 
 # 6. confirm
 deployctl deploy status --env <env>
@@ -152,7 +149,7 @@ deployctl backup restore  --env <env> --file <name>.sql.gz --db <db>_restore
   installs by hand once, to see it work.
 - Those dumps sit on the same host as the data — enough for a bad migration or a deleted
   row, not for losing the host. Turn on your provider's backups or volume snapshots too, and
-  pull copies off it with `backup run` (it fetches to `deploy/backups/`).
+  pull copies off it with `backup run` (it fetches to `~/.deployctl/backups/<project>/<env>/`).
 - `--keep N` controls how many stay on the host.
 - With a **managed** database the provider also has snapshots; these dumps are still worth
   having, because they are portable and restore into anything.

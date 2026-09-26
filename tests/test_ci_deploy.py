@@ -9,6 +9,7 @@ laptop tag deployed over a newer release.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import stat
@@ -17,8 +18,7 @@ import subprocess
 import pytest
 from typer.testing import CliRunner
 
-from deployctl.cli import bundle, paths, secrets
-from deployctl.cli.commands import ci
+from deployctl.cli import bundle, github, paths, secrets
 from deployctl.cli.config import load
 from deployctl.cli.main import app
 
@@ -201,19 +201,22 @@ def gh(monkeypatch):
 
     def fake(args, *, stdin=None):
         calls.append((args, stdin))
-        if args[0] == "api":
-            if remote["digest"] is None:
-                return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)")
-            return subprocess.CompletedProcess(args, 0, remote["digest"] + "\n", "")
+        if args[:2] == ["variable", "list"]:
+            listed = [{"name": "DEPLOYCTL_CONFIG_DIGEST", "value": remote["digest"]}] if remote["digest"] else []
+            return subprocess.CompletedProcess(args, 0, json.dumps(listed), "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr(ci, "_gh", fake)
-    monkeypatch.setattr(ci, "_require_gh", lambda: None)
+    monkeypatch.setattr(github, "gh", fake)
+    monkeypatch.setattr(github, "require", lambda: None)
     return calls, remote
 
 
 def _sync(*args: str):
     return CliRunner().invoke(app, ["ci", "sync-config", "--env", "production", *args])
+
+
+def _writes(calls):
+    return [(args, stdin) for args, stdin in calls if args[1] == "set"]
 
 
 class TestSyncConfig:
@@ -222,18 +225,24 @@ class TestSyncConfig:
         files = bundle.collect("production")
         result = _sync()
         assert result.exit_code == 0, result.output
-        sets = [(args, stdin) for args, stdin in calls if args[0] != "api"]
-        assert sets == [
+        assert _writes(calls) == [
             (["secret", "set", "DEPLOYCTL_CONFIG", "--env", "production"], bundle.encode(files)),
             (["variable", "set", "DEPLOYCTL_CONFIG_DIGEST", "--env", "production",
               "--body", bundle.digest(files)], None),
         ], "the digest goes second: a failure between the two must leave CI refusing, not deploying"
 
-    def test_repo_level_for_github_free(self, config, gh):
+    def test_repo_level_once_with_the_flag(self, config, gh):
         calls, _ = gh
         result = _sync("--repo-level")
         assert result.exit_code == 0, result.output
-        assert "actions/variables/DEPLOYCTL_CONFIG_DIGEST" in calls[0][0][1]
+        assert all("--env" not in args for args, _ in calls)
+
+    def test_repo_level_every_time_on_github_free(self, config, gh):
+        """What `ci connect` records for a private repository on GitHub Free."""
+        calls, _ = gh
+        paths.COMMON_CONFIG.write_text(paths.COMMON_CONFIG.read_text() + "CI_SCOPE=repository\n")
+        result = _sync()
+        assert result.exit_code == 0, result.output
         assert all("--env" not in args for args, _ in calls)
 
     def test_nothing_is_uploaded_when_github_is_current(self, config, gh):
@@ -242,7 +251,7 @@ class TestSyncConfig:
         result = _sync()
         assert result.exit_code == 0, result.output
         assert "already current" in result.output
-        assert [args for args, _ in calls if args[0] != "api"] == []
+        assert _writes(calls) == []
 
     def test_a_config_missing_a_generated_secret_is_not_uploaded(self, config, gh):
         """CI never mints: uploading this would only move the failure to the deploy."""
@@ -303,6 +312,16 @@ class TestHostKeys:
         rc, out = _bash('echo "$SSH_OPTS"', DEPLOYCTL_SSH_STRICT="1")
         assert rc == 0, out
         assert "StrictHostKeyChecking=yes" in out
+
+    def test_a_jump_host_is_used_for_every_connection(self):
+        """ssh, rsync (-e "ssh $SSH_OPTS"), the lock: everything goes through SSH_OPTS."""
+        rc, out = _bash('echo "$SSH_OPTS"', SSH_JUMP_HOST="deploy@bastion.example.com")
+        assert rc == 0, out
+        assert "-o ProxyJump=deploy@bastion.example.com" in out
+
+    def test_no_jump_host_means_a_direct_connection(self):
+        rc, out = _bash('echo "$SSH_OPTS"')
+        assert "ProxyJump" not in out
 
 
 @pytest.fixture

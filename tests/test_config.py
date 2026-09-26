@@ -317,3 +317,28 @@ def test_memory_limits_are_read_the_way_docker_writes_them(limit, mib):
 
 def test_an_unreadable_limit_is_not_guessed():
     assert config.memory_mib("lots") is None
+
+
+# ---- how deploys reach and treat the hosts ---------------------------------------
+
+
+def test_the_fleet_is_reverted_as_a_whole_by_default(write_config):
+    write_config("production", CLUSTER)
+    assert config.load("production").raw["REVERT_SCOPE"] == "fleet"
+
+
+def test_an_unknown_revert_scope_is_an_error(write_config):
+    write_config("production", CLUSTER + "REVERT_SCOPE=some\n")
+    assert any("REVERT_SCOPE must be" in e for e in errors(config.load("production")))
+
+
+@pytest.mark.parametrize("jump", ["bastion", "deploy@bastion.example.com", "deploy@10.0.0.5:2222", "a@one,b@two"])
+def test_a_jump_host_in_ssh_form_is_accepted(write_config, jump):
+    write_config("production", CLUSTER + f"SSH_JUMP_HOST={jump}\n")
+    assert not any("SSH_JUMP_HOST" in e for e in errors(config.load("production")))
+
+
+@pytest.mark.parametrize("jump", ["bastion -o ProxyCommand=evil", "a;b", "a'b"])
+def test_a_jump_host_that_would_inject_ssh_options_is_refused(write_config, jump):
+    write_config("production", CLUSTER + f'SSH_JUMP_HOST="{jump}"\n')
+    assert any("SSH_JUMP_HOST" in e for e in errors(config.load("production")))

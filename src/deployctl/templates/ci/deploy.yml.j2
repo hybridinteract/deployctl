@@ -1,0 +1,192 @@
+# Managed by deployctl «VERSION» — regenerate with: deployctl ci init --force
+#
+# Deploys an already-published image with deployctl — the same engine, deploy
+# lock and guards as a deploy from a laptop, run from here.
+#
+#   automatic  ci.yml calls this after a push to «DEPLOY_BRANCH» passed its checks
+#              and published, when the repository variable AUTO_DEPLOY is 'true'
+#   manual     Actions → deploy → Run workflow from «DEPLOY_BRANCH», or
+#              `deployctl ci deploy`: a tag, a config change, or a rollback
+#
+# Nothing here builds, and nothing here needs the application's dependencies:
+# the job installs deployctl «TOOL_REF» and tells the hosts which image to run.
+# Setup — keys, secrets, variables: `deployctl ci doctor` lists what is missing.
+
+name: deploy
+run-name: ${{ inputs.action || 'update' }} ${{ inputs.tag }} → ${{ inputs.environment }}
+
+on:
+  workflow_call:
+    inputs:
+      environment: { type: string, required: true }
+      tag: { type: string, required: true }
+      action: { type: string, default: update }
+      allow_config_change: { type: boolean, default: false }
+  workflow_dispatch:
+    inputs:
+      # A plain string, not `type: environment`: that dropdown lists configured
+      # GitHub environments, and a private repository on GitHub Free has none.
+      environment:
+        description: Environment to deploy to (a deploy/config/<name>.env)
+        type: string
+        default: «ENV»
+        required: true
+      tag:
+        description: Image tag, a short commit SHA
+        type: string
+        required: true
+      action:
+        description: update migrates then rolls; rollback rolls an older tag and never migrates
+        type: choice
+        options: [update, rollback]
+        default: update
+      allow_config_change:
+        description: Ship config values that differ from the servers' (after deployctl ci sync-config)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: ${{ inputs.action }} ${{ inputs.tag }} → ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    # Each host takes a few minutes (pull, restart, health gate, service watch);
+    # sized for «HOST_COUNT» host(s). `deployctl ci init --force` recomputes it.
+    timeout-minutes: «TIMEOUT_MINUTES»
+    # Records a Deployment. On GitHub Team/Pro it also unlocks the environment's
+    # own secrets, readable only from its allowed branches; on GitHub Free with a
+    # private repository, secrets.* and vars.* resolve to the repository's.
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.APP_URL }}
+    # One deploy per environment at a time, never cancelled mid-roll. The lock on
+    # the primary also keeps a laptop deploy from interleaving with this one.
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      # Prefixed so they cannot collide with a deployctl config key: the process
+      # environment overrides any key the config defines.
+      DEPLOY_ENV: ${{ inputs.environment }}
+      DEPLOY_TAG: ${{ inputs.tag }}
+      DEPLOY_ACTION: ${{ inputs.action }}
+      DEPLOY_ALLOW_CONFIG_CHANGE: ${{ inputs.allow_config_change }}
+    steps:
+      # Inputs reach scripts through env, never pasted in with ${{ }}, and are
+      # checked first. The branch check matters most: the workflow that runs is
+      # the one on the branch the run was started from.
+      - name: Check the inputs
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/«DEPLOY_BRANCH»" ]] \
+            || { echo "::error::deploys run only from «DEPLOY_BRANCH» — this run was started from $GITHUB_REF"; exit 1; }
+          [[ "$DEPLOY_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+            || { echo "::error::not an image tag: '$DEPLOY_TAG'"; exit 1; }
+          [[ "$DEPLOY_ACTION" == update || "$DEPLOY_ACTION" == rollback ]] \
+            || { echo "::error::action must be update or rollback, got '$DEPLOY_ACTION'"; exit 1; }
+
+      # Actions are pinned to commit SHAs: this job holds the production ssh key.
+      - uses: actions/checkout@«ACTIONS.checkout» # «ACTIONS.checkout_version»
+        with:
+          # Full history: `deploy update` refuses a tag that is an ancestor of the
+          # running one, and needs both commits to tell.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@«ACTIONS.setup_uv» # «ACTIONS.setup_uv_version»
+
+      # The pinned version, not whatever is newest: a tool upgrade is a reviewed
+      # change to this file. DEPLOYCTL_INSTALL_TOKEN (read-only, contents:read on
+      # «TOOL_REPO») is needed only while that repository is private.
+      - name: Install deployctl «TOOL_REF»
+        env:
+          TOKEN: ${{ secrets.DEPLOYCTL_INSTALL_TOKEN }}
+        run: |
+          if [[ -n "$TOKEN" ]]; then
+            uv tool install "git+https://x-access-token:${TOKEN}@github.com/«TOOL_REPO»@«TOOL_REF»"
+          else
+            uv tool install "git+https://github.com/«TOOL_REPO»@«TOOL_REF»"
+          fi
+          deployctl --version
+
+      # Optional: reach the servers over a tailnet, so :22 need not be open to the
+      # internet. Skipped until the TAILSCALE_TAGS variable is set.
+      - name: Join the tailnet
+        if: vars.TAILSCALE_TAGS != ''
+        uses: tailscale/github-action@«ACTIONS.tailscale» # «ACTIONS.tailscale_version»
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: ${{ vars.TAILSCALE_TAGS }}
+
+      - name: SSH identity and pinned host keys
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [[ -n "$SSH_KEY" ]] || { echo "::error::DEPLOY_SSH_KEY is not set — run: deployctl ci setup-key"; exit 1; }
+          [[ -n "$KNOWN_HOSTS" ]] || { echo "::error::DEPLOY_KNOWN_HOSTS is not set — run: deployctl ci pin-hosts"; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      # Registers every credential in the bundle with ::add-mask:: before anything
+      # can print one, and refuses a bundle that does not match its digest.
+      - name: Load the deploy config
+        env:
+          DEPLOYCTL_CONFIG: ${{ secrets.DEPLOYCTL_CONFIG }}
+          DEPLOYCTL_CONFIG_DIGEST: ${{ vars.DEPLOYCTL_CONFIG_DIGEST }}
+        run: deployctl ci unpack --env "$DEPLOY_ENV"
+
+      - name: Deploy
+        env:
+          DEPLOYCTL_SSH_STRICT: "1"     # only the pinned host keys, never trust-on-first-use
+          DEPLOYCTL_CONFIG_STRICT: "1"  # a value the servers run with changes only on purpose
+          DEPLOYCTL_NO_MINT: "1"        # a secret missing from the bundle fails, never regenerates
+        run: |
+          if [[ "$DEPLOY_ALLOW_CONFIG_CHANGE" == "true" ]]; then
+            export DEPLOYCTL_ALLOW_SECRET_CHANGE=1
+          fi
+          if [[ "$DEPLOY_ACTION" == rollback ]]; then
+            deployctl deploy rollback --env "$DEPLOY_ENV" --to "$DEPLOY_TAG"
+          else
+            deployctl deploy update --env "$DEPLOY_ENV" --tag "$DEPLOY_TAG"
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "### ${DEPLOY_ACTION} → ${DEPLOY_ENV}: ${RESULT}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| image tag | \`${DEPLOY_TAG}\` |"
+            echo "| started by | ${GITHUB_ACTOR} (${GITHUB_EVENT_NAME}) |"
+            if [[ "$RESULT" != success ]]; then
+              echo ""
+              echo "A failed release is reverted on every host it reached. To go back further:"
+              echo "\`deployctl ci deploy --env ${DEPLOY_ENV} --rollback\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # GitHub already emails whoever triggered a failed run. For a team channel,
+      # add a SLACK_WEBHOOK_URL secret.
+      - name: Alert on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          [[ -n "$SLACK_WEBHOOK_URL" ]] || exit 0
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          text="Deploy failed: ${DEPLOY_ACTION} ${DEPLOY_TAG} → ${DEPLOY_ENV} (${GITHUB_REPOSITORY}) ${run_url}"
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+
+      - name: Remove credentials
+        if: always()
+        run: rm -rf ~/.ssh/id_ed25519 deploy/config deploy/generated deployctl/config deployctl/generated

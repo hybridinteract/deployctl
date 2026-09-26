@@ -32,7 +32,7 @@ def run_backup(
     env: str = env_option(),
     keep: int = typer.Option(7, "--keep", help="Host-side dumps to keep (older ones are pruned)."),
     fetch: bool = typer.Option(
-        True, "--fetch/--no-fetch", help="Also copy the dump to this machine (backups/)."
+        True, "--fetch/--no-fetch", help="Also copy the dump to this machine (~/.deployctl/backups/<project>/<env>/)."
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands instead of running them."),
 ) -> None:

@@ -46,7 +46,7 @@ jobs:
           persist-credentials: false
       # Errors only, for now: the engine predates this check. Raise to warning
       # once the existing findings are cleared.
-      - run: shellcheck -x --source-path=SCRIPTDIR -S error src/deployctl/scripts/*.sh src/deployctl/scripts/common/*.sh src/deployctl/server/*.sh
+      - run: shellcheck -x --source-path=SCRIPTDIR -S error src/deployctl/scripts/*.sh src/deployctl/scripts/common/*.sh
 
   package:
     name: the wheel works on its own

@@ -168,10 +168,10 @@ deployctl ssl setup   --env production  # single-server TLS only
 Then day to day:
 
 ```bash
-deployctl image tags                        # what can I deploy?
-$EDITOR config/production.env                 # bump IMAGE_TAG
-deployctl deploy update --env production    # rolling, health-gated
-deployctl deploy rollback --env production  # back to the previous tag
+deployctl image tags                                  # what can I deploy?
+deployctl deploy update --env production --tag <tag>  # rolling, health-gated, reverted on failure
+deployctl deploy rollback --env production            # back to the previous release
+deployctl ci deploy --env production --tag <tag>      # the same, through GitHub Actions
 ```
 
 ---
@@ -219,8 +219,10 @@ and production with `cluster` is just the common case, not a rule.
 | `config --env E [--key K]` | the resolved configuration, secrets masked |
 | `envs` | list configured environments |
 | `image push [--tag T]` / `image tags` | build+push from this machine / list registry tags |
-| `ci init [--branch B]` | write `.github/workflows/build-image.yml` |
-| `ci sync-config\|status\|unpack` | hand CI this environment's config — see [35-CONTINUOUS-DEPLOYMENT.md](docs/35-CONTINUOUS-DEPLOYMENT.md) |
+| `ci connect\|init\|setup-key\|pin-hosts\|sync-config\|doctor` | set up deploys from GitHub Actions, one step each — see [35-CONTINUOUS-DEPLOYMENT.md](docs/35-CONTINUOUS-DEPLOYMENT.md) |
+| `ci deploy [--tag T\|--rollback]` / `ci runs` / `ci auto-deploy on\|off` | deploy through GitHub, see what it did, deploy on merge |
+| `server bootstrap-script` | the root script that prepares a fresh server |
+| `adopt` / `migrate-config` | move a copied-in deployctl to `deploy/`; drop settings the tool no longer reads |
 | `deploy doctor\|init\|update\|migrate\|rollback\|restart\|stop\|status\|logs\|shell\|history` | operate the stack |
 | `deploy doctor --fix` | repair the permission problems that do not need root |
 | `ssl setup\|renew\|check` | Let's Encrypt (single host only) |
@@ -240,10 +242,9 @@ deployctl (this repository — the installed tool)
 ├── src/deployctl/
 │   ├── cli/                   Python: config resolution, validation, rendering, commands
 │   ├── scripts/               bash: ssh, rsync, docker compose — the deploy engine
-│   ├── templates/             Jinja2 → generated/
+│   ├── templates/             Jinja2 → generated/, the CI workflows, the server bootstrap
 │   ├── profiles/              defaults for each shape (single, cluster)
 │   ├── webui/                 the control panel: routes, action whitelist, static files
-│   └── server/                preparing a fresh server (cloud-init user data)
 ├── examples/demo/project/     what a project's committed part looks like
 ├── tests/                     pytest — run with: uv run pytest
 └── docs/                      start with 05-QUICKSTART.md

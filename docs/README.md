@@ -31,23 +31,21 @@ deployctl ci init                               # publish images from CI
 deployctl setup    --env production --force
 deployctl validate --env production
 deployctl doctor   --env production
-deployctl deploy init --env production
+deployctl deploy init --env production --tag <tag>
 deployctl ssl setup   --env production          # single-server TLS only
 ```
 
-**Every release after that** — the only edit is `IMAGE_TAG`:
+**Every release after that** — merge, with CI/CD set up
+([35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md)); or by hand, naming the tag:
 
 ```bash
 deployctl image tags                            # what can I deploy?
-$EDITOR config/production.env                     # set IMAGE_TAG
-deployctl setup    --env production --force
-deployctl validate --env production
-deployctl doctor   --env production
-deployctl deploy update --env production
+deployctl ci deploy --env production --tag <tag>        # through GitHub Actions
+deployctl deploy update --env production --tag <tag>    # or straight from this machine
 deployctl deploy status --env production
 ```
 
-Both are the two rails on the panel's **Deploy** tab, in the same order.
+The panel's **Deploy** tab walks the same first deployment, one card per command.
 
 Something unclear or wrong in these docs is worth fixing — the deployment steps that are
 easy to get wrong are exactly the ones that produce confusing outages.
