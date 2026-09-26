@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import datetime
-import os
+import json
 import subprocess
 
 import typer
 
-from .. import locks, paths, render, secrets, ui
-from ..config import Config, load
+from .. import locks, render, secrets, tags, ui
+from ..config import Config
 from ..context import env_option, exclusive, load_config, resolve_env
-from ..envfile import patch_env_file
 from ..runner import run
 
 deploy_app = typer.Typer(
@@ -24,6 +22,12 @@ _dry_run_option = typer.Option(
     False, "--dry-run", help="Print every ssh/rsync/compose command instead of executing it."
 )
 _host_option = typer.Option(None, "--host", help="Act on one host instead of all of them.")
+_tag_option = typer.Option(
+    None, "--tag", "-t",
+    help="Image tag to deploy. Default: the tag the primary is running (a redeploy — how a config "
+    "change goes out).",
+    show_default=False,
+)
 _allow_secret_change_option = typer.Option(
     False,
     "--allow-secret-change",
@@ -32,14 +36,28 @@ _allow_secret_change_option = typer.Option(
 )
 
 
-def _prepare(env: str | None) -> Config:
-    """Load config and re-render artifacts so a deploy never ships stale ones.
+def _resolve(cfg: Config, tag: str | None) -> str:
+    """Decide the tag (cli/tags.py), say where it came from, or stop."""
+    try:
+        chosen, source = tags.resolve(cfg, tag, from_hosts=True)
+    except tags.NoTag as exc:
+        ui.error(str(exc))
+        raise typer.Exit(2) from None
+    ui.info(f"image tag {chosen}  ({source})")
+    if tags.deprecated_in_config(cfg):
+        ui.hint("IMAGE_TAG in config/ is deprecated — remove it with: deployctl migrate-config --apply")
+    return chosen
+
+
+def _prepare(env: str | None, tag: str | None = None) -> Config:
+    """Load config, decide the tag and re-render, so a deploy never ships stale artifacts.
 
     Rendering is deterministic and secrets are minted once, so regenerating here
     is free — and it removes the entire "edited config but forgot to run setup"
     failure class.
     """
     cfg = load_config(env)
+    _resolve(cfg, tag)
     try:
         secrets.ensure(cfg)
     except secrets.MintRefused as exc:
@@ -61,66 +79,57 @@ def _engine(
         raise typer.Exit(exc.returncode) from exc
 
 
-def _record_history(cfg: Config, *, kind: str = "deploy") -> None:
-    """Append one line to the local deploy log.
-
-    ``kind`` distinguishes a release from a rollback, and both from a roll of a
-    single host (``host:<address>``). Without it, rolling back appends the older
-    tag as though it were the newest release, and the history reads A, B, A — so
-    a second rollback picks B, the tag that was just rolled away from. A
-    one-host roll is not a release of the environment either.
-
-    The image repository is recorded too. The log is local, untracked state, and
-    a deployctl directory copied from another project brings its log along —
-    tags from a different image, which rollback would otherwise offer.
-    """
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    with paths.history_file().open("a") as handle:
-        handle.write(f"{stamp} {cfg.env} {cfg.raw['IMAGE_TAG']} {kind} {cfg.raw['IMAGE_REPO']}\n")
+def _engine_output(cfg: Config, command: str) -> str:
+    """A read-only engine command's output, captured."""
+    proc = run(cfg, "deploy.sh", [command], check=False, capture=True)
+    if proc.returncode != 0:
+        ui.error((proc.stderr or proc.stdout).strip() or f"deploy.sh {command} failed")
+        raise typer.Exit(proc.returncode or 1)
+    return proc.stdout
 
 
-def _history_entries(env: str, repo: str = "") -> list[tuple[str, str, str]]:
-    """``(stamp, tag, kind)`` for one environment, oldest first.
+# ---- the history, kept on the primary ---------------------------------------------
 
-    Lines written before ``kind`` existed have three fields and are read as
-    releases, which is what they were. Lines that name a different image
-    repository than ``repo`` belong to another project and are skipped; lines
-    older than the repository field cannot be told apart and are kept.
-    """
-    if not paths.history_file().is_file():
-        return []
-    out: list[tuple[str, str, str]] = []
-    for line in paths.history_file().read_text().splitlines():
-        parts = line.split()
-        if len(parts) not in (3, 4, 5) or parts[1] != env:
+
+def parse_history(text: str, env: str) -> list[dict[str, str]]:
+    """The primary's ``.deployctl-history``, oldest first (see append_history in remote.sh)."""
+    entries = []
+    for line in text.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 5 or parts[1] != env:
             continue
-        if len(parts) == 5 and repo and parts[4] != repo:
-            continue
-        out.append((parts[0], parts[2], parts[3] if len(parts) >= 4 else "deploy"))
-    return out
+        stamp, _env, tag, kind, by = parts
+        entries.append({"at": stamp, "tag": tag, "kind": kind, "by": by})
+    return entries
 
 
-def _previous_tag(env: str, current: str, repo: str = "") -> str | None:
-    """The release before the one running now, or None if there isn't one.
+def previous_release(entries: list[dict[str, str]], current: str) -> str | None:
+    """The release before the one running now, or None.
 
-    Rollbacks and one-host rolls are skipped: the question is "what was released
-    to this environment before this", and neither is a new point in that history.
+    Rollbacks and one-host rolls are skipped: the question is "what was released to
+    this environment before this", and neither is a new point in that history.
+    Without skipping them the history reads A, B, A after a rollback, and a second
+    rollback would pick B — the tag just rolled away from.
     """
     releases: list[str] = []
-    for _stamp, tag, kind in _history_entries(env, repo):
-        if kind != "deploy":
+    for entry in entries:
+        if entry["kind"] not in ("deploy", "init"):
             continue
-        if not releases or releases[-1] != tag:
-            releases.append(tag)
+        if not releases or releases[-1] != entry["tag"]:
+            releases.append(entry["tag"])
     if current in releases:
         index = len(releases) - 1 - releases[::-1].index(current)
         return releases[index - 1] if index > 0 else None
     return releases[-1] if releases else None
 
 
+# ---- commands ----------------------------------------------------------------------
+
+
 @deploy_app.command("doctor")
 def doctor(
     env: str = env_option(),
+    tag: str = _tag_option,
     fix: bool = typer.Option(
         False, "--fix", help="Repair the permission problems that do not need root, then re-report."
     ),
@@ -136,41 +145,45 @@ def doctor(
     args = ["--fix"] if fix else []
     try:
         with locks.env_lock(env_name, "deploy doctor"):
-            _engine(_prepare(env_name), "doctor", *args)
+            _engine(_prepare(env_name, tag), "doctor", *args)
             return
     except locks.LockHeld as held:
         # Re-rendering now would rewrite the files that run is rsyncing. The
         # artifacts on disk are exactly what it is shipping, so check those.
         ui.warn(f"a run is in progress ({held.holder}) — checking the artifacts it is shipping, not re-rendering")
-    _engine(load_config(env_name), "doctor", *args)
+    cfg = load_config(env_name)
+    _resolve(cfg, tag)
+    _engine(cfg, "doctor", *args)
 
 
 @deploy_app.command("init")
-def init(env: str = env_option(), dry_run: bool = _dry_run_option) -> None:
+def init(env: str = env_option(), tag: str = _tag_option, dry_run: bool = _dry_run_option) -> None:
     """First-time bring-up: push, pull, migrate once, then start primary → rest."""
     env_name = resolve_env(env)
     with exclusive(env_name, "deploy init"):
-        cfg = _prepare(env_name)
+        cfg = _prepare(env_name, tag)
         _engine(cfg, "init", dry_run=dry_run)
         if not dry_run:
-            _record_history(cfg)
+            tags.remember(env_name, cfg.raw["IMAGE_TAG"])
 
 
 @deploy_app.command("update")
 def update(
     env: str = env_option(),
+    tag: str = _tag_option,
     host: str = _host_option,
     dry_run: bool = _dry_run_option,
     allow_secret_change: bool = _allow_secret_change_option,
 ) -> None:
     """Rolling release: migrate once, then per host pull + up, health-gated.
 
-    Stops at the first host that fails its health gate, leaving the remaining
-    hosts on the previous release.
+    A host that fails its health gate or the service watch is reverted, and so
+    is every host already rolled (REVERT_SCOPE=fleet), leaving the whole fleet on
+    its previous release. Without --tag, the running tag is redeployed.
     """
     env_name = resolve_env(env)
     with exclusive(env_name, "deploy update"):
-        cfg = _prepare(env_name)
+        cfg = _prepare(env_name, tag)
         if host:
             if host not in cfg.hosts:
                 ui.error(f"{host} is not in HOSTS ({' '.join(cfg.hosts)})")
@@ -179,21 +192,21 @@ def update(
         else:
             _engine(cfg, "update", dry_run=dry_run, allow_secret_change=allow_secret_change)
         if not dry_run:
-            _record_history(cfg, kind=f"host:{host}" if host else "deploy")
+            tags.remember(env_name, cfg.raw["IMAGE_TAG"])
 
 
 @deploy_app.command("migrate")
-def migrate(env: str = env_option(), dry_run: bool = _dry_run_option) -> None:
-    """Run the project's MIGRATE_CMD once, on the primary host."""
+def migrate(env: str = env_option(), tag: str = _tag_option, dry_run: bool = _dry_run_option) -> None:
+    """Run the project's MIGRATE_CMD once, on the primary host (with the running image by default)."""
     env_name = resolve_env(env)
     with exclusive(env_name, "deploy migrate"):
-        _engine(_prepare(env_name), "migrate", dry_run=dry_run)
+        _engine(_prepare(env_name, tag), "migrate", dry_run=dry_run)
 
 
 @deploy_app.command("rollback")
 def rollback(
     env: str = env_option(),
-    to: str = typer.Option(None, "--to", help="Tag to roll back to. Default: the previously deployed one."),
+    to: str = typer.Option(None, "--to", help="Tag to roll back to. Default: the release before the running one."),
     dry_run: bool = _dry_run_option,
 ) -> None:
     """Re-deploy a previous image tag, with the same health-gated roll.
@@ -201,47 +214,30 @@ def rollback(
     Only the application image moves back, and nothing is migrated: the older
     image cannot run its migrations against a database that is already past them.
     Migrations are NOT reverted either — the older code has to tolerate the
-    newer schema, which is what additive migrations guarantee.
+    newer schema, which is what additive migrations guarantee. The running tag and
+    the history both come from the primary, so a laptop and CI agree on them.
     """
     env_name = resolve_env(env)
-    loaded = load(env_name)
-    current = loaded.raw.get("IMAGE_TAG", "")
+    cfg = load_config(env_name)
+    current = tags.running(cfg)
     target = to
     if not target:
-        target = _previous_tag(env_name, current, loaded.raw.get("IMAGE_REPO", ""))
+        target = previous_release(parse_history(_engine_output(cfg, "history"), env_name), current)
         if not target:
-            ui.error("no earlier release recorded for this environment")
-            ui.hint("pass one explicitly: deployctl deploy rollback --to <tag> "
-                    "(see deployctl image tags, or deployctl deploy history)")
+            ui.error("no earlier release is recorded on the primary for this environment")
+            ui.hint("pass one explicitly: deployctl deploy rollback --to <tag> (see deployctl image tags)")
             raise typer.Exit(2)
-
     if target == current:
-        if not to:
-            ui.error(f"{target} is already the deployed tag")
-            raise typer.Exit(2)
-        # IMAGE_TAG in config is what THIS machine last deployed. Once CI deploys,
-        # the hosts can be on something newer, and a rollback to the tag this file
-        # happens to hold is exactly the one that must not be refused. Re-rolling
-        # a tag that really is running is harmless: the same health-gated roll.
-        ui.warn(f"config/{env_name}.env already names {target}, but it is not updated by CI "
-                "deploys — rolling anyway")
+        ui.error(f"{target} is already running on {cfg.primary_host}")
+        raise typer.Exit(2)
 
     ui.header(f"Rollback — {env_name}: {current or '?'} → {target}")
     ui.warn("only the image moves back: nothing is migrated, and no migration is reverted")
-
-    # IMAGE_TAG is env-introducible, so the override flows through config
-    # resolution, re-rendering and the bash layer as one consistent value.
-    os.environ["IMAGE_TAG"] = target
     with exclusive(env_name, f"deploy rollback → {target}"):
-        cfg = _prepare(env_name)
+        cfg = _prepare(env_name, target)
         _engine(cfg, "rollback", dry_run=dry_run)
-
         if not dry_run:
-            # Pin the config so the on-disk record matches what is now running —
-            # otherwise the next routine deploy would silently re-deploy the bad tag.
-            patch_env_file(paths.config_file(env_name), {"IMAGE_TAG": target})
-            ui.ok(f"pinned IMAGE_TAG={target} in config/{env_name}.env")
-            _record_history(cfg, kind="rollback")
+            tags.remember(env_name, target)
 
 
 @deploy_app.command("restart")
@@ -254,6 +250,8 @@ def restart(env: str = env_option(), host: str = _host_option, dry_run: bool = _
 @deploy_app.command("stop")
 def stop(env: str = env_option(), dry_run: bool = _dry_run_option) -> None:
     """docker compose down on every host. The site goes down."""
+    import os
+
     cfg = load_config(env)
     # ASSUME_YES covers non-interactive callers (the control panel confirms in
     # the browser before it ever invokes this).
@@ -276,10 +274,47 @@ def unlock(env: str = env_option()) -> None:
     _engine(load_config(env), "unlock")
 
 
+def parse_state(text: str) -> dict:
+    """``deploy.sh state`` output as the structure ``status --json`` prints."""
+    hosts: dict[str, dict] = {}
+    for line in text.splitlines():
+        parts = line.split("\t")
+        if parts[0] == "HOST" and len(parts) == 4:
+            hosts[parts[1]] = {"host": parts[1], "role": parts[2], "reachable": parts[3] == "reachable",
+                               "tag": "", "deployed_at": "", "deployed_by": "", "services": []}
+        elif parts[0] == "STATE" and len(parts) == 3 and parts[1] in hosts and "=" in parts[2]:
+            key, value = parts[2].split("=", 1)
+            field = {"IMAGE_TAG": "tag", "DEPLOYED_AT": "deployed_at", "DEPLOYED_BY": "deployed_by"}.get(key)
+            if field:
+                hosts[parts[1]][field] = value
+        elif parts[0] == "SVC" and len(parts) == 3 and parts[1] in hosts:
+            fields = parts[2].split()
+            if len(fields) == 6:
+                name, restarts, state, health, code, policy = fields
+                hosts[parts[1]]["services"].append({
+                    "name": name, "state": state, "health": health, "restarts": int(restarts)
+                    if restarts.isdigit() else None, "exit_code": code, "restart_policy": policy,
+                })
+    tags_running = {h["tag"] for h in hosts.values() if h["tag"]}
+    return {
+        "hosts": list(hosts.values()),
+        # One tag everywhere, or the fleet is split (a revert that could not finish).
+        "tag": next(iter(tags_running)) if len(tags_running) == 1 else None,
+        "split": len(tags_running) > 1,
+    }
+
+
 @deploy_app.command("status")
-def status(env: str = env_option()) -> None:
+def status(
+    env: str = env_option(),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable: tags, who deployed, every service."),
+) -> None:
     """Service status and the deployed tag on every host."""
-    _engine(load_config(env), "status")
+    cfg = load_config(env)
+    if as_json:
+        print(json.dumps({"env": cfg.env, **parse_state(_engine_output(cfg, "state"))}, indent=2))
+        return
+    _engine(cfg, "status")
 
 
 @deploy_app.command("logs")
@@ -299,17 +334,14 @@ def shell(
 
 @deploy_app.command("history")
 def history(env: str = env_option()) -> None:
-    """Locally recorded deploys for this environment (what rollback consults)."""
+    """The environment's releases, from the primary — the same record CI and laptops write."""
     env_name = resolve_env(env)
-    if not paths.history_file().is_file():
-        ui.warn("no deploy history recorded yet")
+    entries = parse_history(_engine_output(load_config(env_name), "history"), env_name)
+    if not entries:
+        ui.warn("no releases recorded on the primary yet")
         raise typer.Exit(2)
-    repo = load(env_name).raw.get("IMAGE_REPO", "")
-    for stamp, tag, kind in _history_entries(env_name, repo):
-        if kind == "rollback":
-            marker = "  (rollback)"
-        elif kind.startswith("host:"):
-            marker = f"  (one host: {kind[5:]})"
-        else:
-            marker = ""
-        print(f"  {stamp}  {tag}{marker}")
+    for entry in entries:
+        marker = {"rollback": "  (rollback)", "init": "  (first bring-up)"}.get(entry["kind"], "")
+        if entry["kind"].startswith("host:"):
+            marker = f"  (one host: {entry['kind'][5:]})"
+        print(f"  {entry['at']}  {entry['tag']:<14}{marker}   {entry['by']}")

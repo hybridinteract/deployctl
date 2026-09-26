@@ -1,20 +1,24 @@
 #!/bin/bash
 ##############################################################################
-# droplet-user-data.sh — prepare a fresh Ubuntu droplet for deployctl.
+# Prepare a fresh Ubuntu server for deployctl — «PROJECT» / «ENV».
+# Rendered by deployctl «VERSION»: deployctl server bootstrap-script --env «ENV»
 #
-# Paste this into DigitalOcean's "Add Initialization scripts (user data)" box when
-# creating the droplet, or pass it with doctl --user-data-file. cloud-init runs it
-# once, as root, on first boot. It does Part B of the Tutorial (B1–B6) so the
-# first thing you do by hand is the B7 check from your own machine:
+# Run it once, as root, on each new server — either of:
+#   • DigitalOcean: paste it into "Add Initialization scripts (user data)" when
+#     creating the droplet (cloud-init runs it on first boot), or
+#     doctl compute droplet create … --user-data-file bootstrap.sh
+#   • any server:   deployctl server bootstrap-script --env «ENV» | ssh root@<ip> 'bash -s'
 #
-#   ssh deploy@<droplet-ip> docker ps
+# Then, from your own machine:
+#
+#   ssh «SSH_USER»@<server-ip> docker ps
 #
 # Unlike the rest of deployctl this runs ON the server, not on your machine.
 #
 # Progress:  ssh root@<ip> 'grep userdata /var/log/cloud-init-output.log'
 # Finished:  /var/lib/deployctl-bootstrap.done exists
 #
-# Safe to re-run by hand on an existing server (sudo bash droplet-user-data.sh):
+# Safe to re-run on an existing server (sudo bash bootstrap.sh):
 # every step checks before it changes anything.
 ##############################################################################
 
@@ -23,23 +27,22 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Settings. The first two must match config/<env>.env: SSH_USER and REMOTE_DIR.
 # ---------------------------------------------------------------------------
-DEPLOY_USER="deploy"
-REMOTE_DIR="/opt/myapp"           # /opt/<project>; staging: /opt/<project>-staging
-SWAP_SIZE="2G"
+DEPLOY_USER="«SSH_USER»"
+REMOTE_DIR="«REMOTE_DIR»"
+SWAP_SIZE="«SWAP_SIZE»"
 
-# Public keys the deploy user accepts in addition to the droplet's own (the ones
-# you picked in the DigitalOcean panel). Put the CI deploy key here — the public
-# half of the DEPLOY_SSH_KEY secret — so deploy.yml can reach the new server.
-# One key per line.
+# Public keys the deploy user accepts besides root's own (the ones you picked when
+# creating the server). The CI key does not belong here: `deployctl ci setup-key`
+# installs it on every host, and rotates it, over ssh. One key per line.
 EXTRA_AUTHORIZED_KEYS=""
 
 # Key-only SSH: no passwords for anyone, root by key only. Root stays reachable
 # because the permission fixes in "When it breaks" need it.
-HARDEN_SSH=true
+HARDEN_SSH=«HARDEN_SSH»
 
 # A kernel upgrade in B1 only takes effect after a reboot. First boot is the one
 # moment nothing is running yet, so take it now rather than mid-deploy later.
-REBOOT_IF_REQUIRED=true
+REBOOT_IF_REQUIRED=«REBOOT»
 
 # ---------------------------------------------------------------------------
 
@@ -174,7 +177,7 @@ sysctl -q -p /etc/sysctl.d/60-deployctl-swap.conf
 if ufw status 2>/dev/null | grep -q 'Status: active'; then
     log "B6: WARNING ufw is active — the Tutorial expects it inactive (use the cloud firewall)"
 else
-    log "B6: ufw inactive, as expected — attach a DigitalOcean cloud firewall (22, 80, 443)"
+    log "B6: ufw inactive, as expected — attach a cloud firewall: «FIREWALL»"
 fi
 
 # ---------------------------------------------------------------------------
@@ -194,7 +197,7 @@ if [[ "$HARDEN_SSH" == "true" ]]; then
     # sshd keeps the FIRST value it reads, and the drop-ins are read in name
     # order — 10- wins over cloud-init's own 50-cloud-init.conf.
     cat > /etc/ssh/sshd_config.d/10-deployctl.conf <<'EOF'
-# Written by deployctl/host/droplet-user-data.sh
+# Written by deployctl server bootstrap-script
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
@@ -218,9 +221,10 @@ touch /var/lib/deployctl-bootstrap.done
 public_ip="$(curl -fsS --max-time 5 http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address 2>/dev/null || hostname -I | awk '{print $1}')"
 
 log "done — $(uname -m), $(free -h | awk '/^Mem:/{print $2}') RAM, $(free -h | awk '/^Swap:/{print $2}') swap"
-log "next, from your own machine (Tutorial B7):"
+log "next, from your own machine:"
 log "    ssh $DEPLOY_USER@$public_ip docker ps"
-log "known_hosts lines for this server — for DEPLOY_KNOWN_HOSTS in GitHub:"
+log "this server's host keys — compare with the fingerprint your first ssh shows;"
+log "then \`deployctl ci pin-hosts\` gives them to GitHub:"
 for pub in /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_ecdsa_key.pub /etc/ssh/ssh_host_rsa_key.pub; do
     if [[ -f "$pub" ]]; then log "    $public_ip $(cut -d' ' -f1,2 "$pub")"; fi
 done

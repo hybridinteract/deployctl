@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import typer
 
-from .. import paths, render, secrets, ui
+from .. import paths, render, secrets, tags, ui
 from ..context import env_option, exclusive, load_config, resolve_env
 
 
 def setup(
     env: str = env_option(),
+    tag: str = typer.Option(
+        None, "--tag", "-t",
+        help="Image tag to render. Default: the tag last used on this machine (a deploy ships its own).",
+        show_default=False,
+    ),
     force: bool = typer.Option(False, "--force", "-f", help="Rebuild artifacts even if they already exist."),
     rotate_secrets: bool = typer.Option(
         False,
@@ -21,12 +26,20 @@ def setup(
     env_name = resolve_env(env)
     # A render mid-deploy rewrites the files that deploy is rsyncing.
     with exclusive(env_name, "setup"):
-        _setup(env_name, force=force, rotate_secrets=rotate_secrets)
+        _setup(env_name, tag=tag, force=force, rotate_secrets=rotate_secrets)
 
 
-def _setup(env: str, *, force: bool, rotate_secrets: bool) -> None:
+def _setup(env: str, *, tag: str | None, force: bool, rotate_secrets: bool) -> None:
     cfg = load_config(env)
     ui.header(f"Generate artifacts — {cfg.env}")
+    # Local only: no ssh to ask the hosts what they run. A deploy re-renders with
+    # its own tag anyway; this is for looking at, and validating, the artifacts.
+    try:
+        chosen, source = tags.resolve(cfg, tag, from_hosts=False)
+    except tags.NoTag as exc:
+        ui.error(str(exc))
+        raise typer.Exit(2) from None
+    ui.info(f"image tag {chosen}  ({source})")
 
     minted = secrets.ensure(cfg, rotate=rotate_secrets)
     for key in minted:
@@ -43,6 +56,7 @@ def _setup(env: str, *, force: bool, rotate_secrets: bool) -> None:
             ui.debug(f"removed stale {path}")
 
     written = render.render_all(cfg)
+    tags.remember(cfg.env, chosen)
     for path in written:
         ui.ok(f"wrote {path.relative_to(paths.ROOT)}")
 

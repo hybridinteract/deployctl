@@ -96,7 +96,6 @@ REGISTRY_TOKEN=ghp_…            # classic PAT, read:packages only
 ```sh
 MODE=single
 API_SUBDOMAIN=api
-IMAGE_TAG=                       # filled in after the first build
 HOSTS="203.0.113.10"
 SSH_USER=deploy
 REMOTE_DIR=/opt/myapp
@@ -134,10 +133,11 @@ The run's Summary prints the tag. Or build from your machine:
 deployctl image push          # tags with the current git short SHA, pins it for you
 ```
 
-Then put the tag in `config/production.env` (`image push` does this automatically):
+Then name that tag on the first deploy — the hosts run nothing yet, so there is no running
+tag to default to. Every later deploy defaults to the tag the primary runs:
 
 ```sh
-IMAGE_TAG=fb31c25
+deployctl deploy init --env production --tag fb31c25
 ```
 
 ---
@@ -211,8 +211,7 @@ An unverified backup is a hypothesis, not a backup.
 ```bash
 # deploy a new build
 deployctl image tags                                  # what is available
-$EDITOR config/production.env                            # bump IMAGE_TAG
-deployctl deploy update --env production
+deployctl deploy update --env production --tag <tag>  # or through GitHub: deployctl ci deploy --tag <tag>
 
 # something wrong
 deployctl deploy rollback --env production

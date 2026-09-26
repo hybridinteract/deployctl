@@ -97,7 +97,8 @@ ACTIONS: dict[str, Action] = {
                danger=True, touches_hosts=True, needs_migrate=True),
         Action("rollback", "Rollback", ("deploy", "rollback", "--env", "{env}"),
                "Re-deploy the previously recorded image tag, health-gated.",
-               effect="Moves the image back and pins that tag in config. Runs no migrations and reverts none.",
+               effect="Moves the image back to the release before the running one, from the history on the "
+                      "primary. Runs no migrations and reverts none.",
                danger=True, touches_hosts=True),
         Action("restart", "Restart", ("deploy", "restart", "--env", "{env}"),
                "Restart services on every host, health-gated.",
@@ -113,7 +114,7 @@ ACTIONS: dict[str, Action] = {
                danger=True, touches_hosts=True, tls_modes=("letsencrypt",)),
         Action("backup-run", "Backup now", ("backup", "run", "--env", "{env}"),
                "pg_dump on the primary, prune old dumps, fetch a local copy.",
-               effect="Writes a dump on the host and a copy in backups/ of the deploy directory.",
+               effect="Writes a dump on the host and a copy in ~/.deployctl/backups/ on this machine.",
                danger=True, touches_hosts=True),
     )
 }

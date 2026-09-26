@@ -237,6 +237,8 @@ def open_terminal_ssh(host: str, env: str):
     if host not in cfg.hosts:
         raise HTTPException(status_code=400, detail="unknown host")
     user = cfg.raw.get("SSH_USER") or "deploy"
-    command = f"ssh -o StrictHostKeyChecking=accept-new {shlex.quote(f'{user}@{host}')}"
+    jump = cfg.raw.get("SSH_JUMP_HOST", "")
+    via = f"-J {shlex.quote(jump)} " if jump else ""
+    command = f"ssh -o StrictHostKeyChecking=accept-new {via}{shlex.quote(f'{user}@{host}')}"
     ok, message = open_native_terminal(command, f"ssh {host}")
     return term_result(ok, message)

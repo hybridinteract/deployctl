@@ -46,13 +46,22 @@ fi
 
 require_env() {
     local missing=0 key
-    for key in DEPLOYCTL_ENV HOSTS PRIMARY_HOST SSH_USER REMOTE_DIR COMPOSE_PROJECT IMAGE_REF; do
+    for key in DEPLOYCTL_ENV HOSTS PRIMARY_HOST SSH_USER REMOTE_DIR COMPOSE_PROJECT; do
         if [[ -z "${!key:-}" ]]; then
             print_error "missing required environment: $key (deploy.sh is driven by the deployctl CLI)"
             missing=1
         fi
     done
     [[ $missing -eq 0 ]] || exit 2
+}
+
+# Only the commands that put an image on the hosts need to know which one.
+# Reading — status, logs, the running tag, the history — does not.
+require_image() {
+    if [[ -z "${IMAGE_TAG:-}" || -z "${IMAGE_REF:-}" || "$IMAGE_REF" == *: ]]; then
+        print_error "no image tag for this command — pass --tag (the CLI resolves one from the hosts otherwise)"
+        exit 2
+    fi
 }
 
 # ---- permissions -------------------------------------------------------------
@@ -344,32 +353,76 @@ start_release() {
     verify_services "$host" "$role" "$baseline" || return 1
 }
 
+# Hosts this run has moved to the new release, in order, and the tag each ran
+# before it — "host=tag" pairs. Strings, not arrays: macOS ships bash 3.2, which
+# has no associative arrays.
+ROLLED=""
+PREVIOUS_TAGS=""
+
+previous_tag_of() {
+    local pair
+    for pair in $PREVIOUS_TAGS; do
+        [[ "${pair%%=*}" == "$1" ]] && { echo "${pair#*=}"; return 0; }
+    done
+    return 0
+}
+
 # Bring one host to the new release and verify it before touching the next. If
-# any step fails, the previous release is put back on this host and the roll
-# stops. Both steps run inside `if`, where bash suspends set -e, which is why
-# every function they call returns its own status.
+# any step fails, the previous release is put back on this host and it returns 1;
+# the caller decides what happens to the hosts rolled before it. Both steps run
+# inside `if`, where bash suspends set -e, which is why every function they call
+# returns its own status.
 roll_host() {
     local host="$1" role previous=""
     role="$(host_role "$host")"
     print_separator
     print_info "rolling ${host} (${role})"
     [[ "${DEPLOYCTL_DRY_RUN:-}" == "1" ]] || previous="$(read_state_tag "$host")"
+    PREVIOUS_TAGS="${PREVIOUS_TAGS} ${host}=${previous}"
 
     take_snapshot "$host" "$role"
     if stage_release "$host" "$role" && start_release "$host" "$role"; then
         record_state "$host"
+        ROLLED="${ROLLED} ${host}"
         return 0
     fi
 
     print_error "[$host] ${IMAGE_TAG} failed on this host — stopping the roll"
     revert_host "$host" "$role" "$previous" || true
-    local -a fleet
-    read -r -a fleet <<< "$HOSTS"
-    if (( ${#fleet[@]} > 1 )); then
-        print_error "  hosts rolled before this one stay on ${IMAGE_TAG}; the rest were not touched."
+    return 1
+}
+
+# A host failed mid-roll. Unless told otherwise, every host this run already
+# moved goes back too, newest first, each from its own snapshot — so an unattended
+# deploy never leaves the fleet split between two releases behind the load
+# balancer. REVERT_SCOPE=host keeps them on the new release (the failed host is
+# still reverted) and says how to converge by hand.
+revert_fleet() {
+    local failed="$1" h role previous reversed="" all_back=1
+    [[ -n "${ROLLED// /}" ]] || return 0
+    if [[ "${REVERT_SCOPE:-fleet}" != "fleet" || "${DEPLOYCTL_NO_REVERT:-}" == "1" ]]; then
+        print_error "  hosts already on ${IMAGE_TAG}:${ROLLED} — the fleet is split between two releases"
         print_error "  → all back to one release: deployctl deploy rollback --env ${DEPLOYCTL_ENV}"
+        return 0
     fi
-    exit 1
+    print_separator
+    print_warning "[fleet] ${failed} failed — putting back the hosts this run already moved to ${IMAGE_TAG}:${ROLLED}"
+    for h in $ROLLED; do reversed="${h} ${reversed}"; done
+    for h in $reversed; do
+        role="$(host_role "$h")"
+        previous="$(previous_tag_of "$h")"
+        if revert_host "$h" "$role" "$previous"; then
+            # It recorded the new tag when it passed; the record follows the revert.
+            [[ -n "$previous" ]] && record_state "$h" "$previous"
+        else
+            all_back=0
+        fi
+    done
+    if [[ $all_back -eq 1 ]]; then
+        print_warning "[fleet] every host is back on the release it ran before"
+    else
+        print_error "[fleet] not every host could be put back — deployctl deploy status --env ${DEPLOYCTL_ENV} shows what each runs"
+    fi
 }
 
 # ---- commands -----------------------------------------------------------------
@@ -417,6 +470,7 @@ cmd_init() {
         record_state "$h"
     done
 
+    append_history init
     print_separator
     print_success "initial deployment complete"
     if [[ "${TLS_LE:-false}" == "true" ]]; then
@@ -463,13 +517,17 @@ cmd_update() {
         fi
     fi
 
-    # One host at a time, health-gated: a bad release stops the roll while the
-    # remaining hosts still serve the previous one.
+    # One host at a time, health-gated. A host that fails is reverted, and so is
+    # every host already rolled (revert_fleet), so the command is all or nothing.
     local h
     for h in $(ordered_hosts); do
-        roll_host "$h"
+        if ! roll_host "$h"; then
+            revert_fleet "$h"
+            exit 1
+        fi
     done
 
+    append_history "$( [[ "$kind" == rollback ]] && echo rollback || echo deploy )"
     print_separator
     print_success "${kind} complete — every host is on ${IMAGE_TAG}"
 }
@@ -480,7 +538,8 @@ cmd_roll_one() {
     acquire_deploy_lock "deploy update --host ${host} → ${IMAGE_TAG}" || exit 1
     # This path skips doctor, but not the one check that stops an outage.
     check_live_env "$host" || exit 1
-    roll_host "$host"
+    roll_host "$host" || exit 1
+    append_history "host:${host}"
 }
 
 cmd_migrate() {
@@ -600,6 +659,99 @@ cmd_unlock() {
     print_success "lock cleared"
 }
 
+# ---- the CI deploy key ------------------------------------------------------------
+# `deployctl ci setup-key` drives this: a key only CI uses, on every host — and on
+# the jump host, whose own login CI needs too. The key is recognised by its comment
+# (CI_KEY_COMMENT), which is how a rotation finds the one it replaces.
+#   CI_KEY_MODE=check    print "PRESENT <where>" or "ABSENT <where>" for each
+#   CI_KEY_MODE=install  append CI_PUBKEY, prefixed `restrict` (no forwarding, no pty)
+#   CI_KEY_MODE=rotate   remove every line with CI_KEY_COMMENT, then append
+#   CI_KEY_MODE=verify   log in with CI_KEY_FILE alone, no agent: what CI will do
+ci_key_on() {
+    local target="$1" opts="$2" script
+    # shellcheck disable=SC2016  # $HOME and friends expand on the host
+    script='umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; f=~/.ssh/authorized_keys'
+    case "$CI_KEY_MODE" in
+        check)
+            script="$script; if grep -q -F -- '${CI_KEY_COMMENT}' \"\$f\"; then echo PRESENT; else echo ABSENT; fi" ;;
+        install)
+            script="$script; grep -q -x -F -- 'restrict ${CI_PUBKEY}' \"\$f\" || printf '%s\n' 'restrict ${CI_PUBKEY}' >> \"\$f\"; echo INSTALLED" ;;
+        rotate)
+            script="$script; grep -v -F -- '${CI_KEY_COMMENT}' \"\$f\" > \"\$f.tmp\" || true; mv \"\$f.tmp\" \"\$f\"; printf '%s\n' 'restrict ${CI_PUBKEY}' >> \"\$f\"; echo INSTALLED" ;;
+    esac
+    # shellcheck disable=SC2086  # opts word-splits into flags
+    ssh $opts "$target" "$script"
+}
+
+cmd_ci_key() {
+    local h out bad=0
+    [[ "${CI_KEY_MODE:-}" =~ ^(check|install|rotate|verify)$ ]] || { print_error "CI_KEY_MODE must be check, install, rotate or verify"; exit 2; }
+    [[ -n "${CI_KEY_COMMENT:-}" ]] || { print_error "CI_KEY_COMMENT is not set"; exit 2; }
+    local targets=() opts=()
+    for h in $(ordered_hosts); do targets+=("${SSH_USER}@${h}"); opts+=("$SSH_OPTS"); done
+    if [[ -n "${SSH_JUMP_HOST:-}" ]]; then
+        # The first hop of the chain. ProxyJump takes host:port; an ssh target does
+        # not, so a port becomes -p.
+        local jump="${SSH_JUMP_HOST%%,*}" jump_opts="$SSH_BASE_OPTS"
+        if [[ "$jump" =~ :([0-9]+)$ ]]; then
+            jump_opts="$jump_opts -p ${BASH_REMATCH[1]}"
+            jump="${jump%:*}"
+        fi
+        targets+=("$jump"); opts+=("$jump_opts")
+    fi
+
+    local i
+    for i in "${!targets[@]}"; do
+        if [[ "$CI_KEY_MODE" == "verify" ]]; then
+            # shellcheck disable=SC2086
+            if ssh ${opts[$i]} -i "$CI_KEY_FILE" -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes "${targets[$i]}" true; then
+                echo "OK ${targets[$i]}"
+            else
+                echo "FAILED ${targets[$i]}"; bad=1
+            fi
+            continue
+        fi
+        if out="$(ci_key_on "${targets[$i]}" "${opts[$i]}")"; then
+            echo "${out##*$'\n'} ${targets[$i]}"
+        else
+            echo "UNREACHABLE ${targets[$i]}"; bad=1
+        fi
+    done
+    return $bad
+}
+
+# The tag the primary runs — what `deploy update` redeploys when none is given.
+cmd_running_tag() {
+    read_state_tag "$PRIMARY_HOST"
+}
+
+# The environment's release history, from the primary. Empty when there is none.
+cmd_history() {
+    remote "$PRIMARY_HOST" "cat '${REMOTE_DIR}/${HISTORY_FILE}' 2>/dev/null" 2>/dev/null || true
+}
+
+# Everything `deploy status --json` needs, tab-separated, one fact per line:
+#   HOST  <addr> <role> <reachable|unreachable>
+#   STATE <addr> <KEY=value>              — the host's .deployctl-state
+#   SVC   <addr> <container report line>  — see container_report
+cmd_state() {
+    local h role line
+    for h in $(ordered_hosts); do
+        role="$(host_role "$h")"
+        if ! remote "$h" true 2>/dev/null; then
+            printf 'HOST\t%s\t%s\tunreachable\n' "$h" "$role"
+            continue
+        fi
+        printf 'HOST\t%s\t%s\treachable\n' "$h" "$role"
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && printf 'STATE\t%s\t%s\n' "$h" "$line"
+        done < <(remote "$h" "cat '${REMOTE_DIR}/${STATE_FILE}' 2>/dev/null" 2>/dev/null || true)
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && printf 'SVC\t%s\t%s\n' "$h" "$line"
+        done < <(container_report "$h")
+    done
+}
+
 hosts_or_arg() {
     if [[ -n "$ARG_HOST" ]]; then echo "$ARG_HOST"; else ordered_hosts; fi
 }
@@ -608,12 +760,19 @@ hosts_or_arg() {
 
 require_env
 case "$COMMAND" in
+    doctor|init|update|rollback|roll-one|migrate) require_image ;;
+esac
+case "$COMMAND" in
     doctor)   doctor ;;
     init)     cmd_init ;;
     update)   cmd_update update ;;
     rollback) cmd_update rollback ;;
     roll-one) cmd_roll_one ;;
     migrate)  cmd_migrate ;;
+    running-tag) cmd_running_tag ;;
+    history)  cmd_history ;;
+    state)    cmd_state ;;
+    ci-key)   cmd_ci_key ;;
     restart)  cmd_restart ;;
     stop)     cmd_stop ;;
     status)   cmd_status ;;

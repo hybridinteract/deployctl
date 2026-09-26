@@ -152,9 +152,8 @@ deployctl ssl setup   --env production       # single-server TLS only
 Then for each release:
 
 ```bash
-deployctl image tags                         # what can I deploy?
-$EDITOR config/production.env                  # bump IMAGE_TAG
-deployctl deploy update --env production     # rolling, health-gated
+deployctl image tags                                   # what can I deploy?
+deployctl deploy update --env production --tag <tag>   # rolling, health-gated, reverted on failure
 ```
 
 Add `--dry-run` to any deploy command to print every ssh/rsync/compose command it would

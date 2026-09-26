@@ -9,7 +9,7 @@
 #               client tools)
 #
 # Dumps land in $REMOTE_DIR/backups/ on the host (excluded from deploy syncs)
-# and, by default, are also fetched to backups/ in the deploy directory — a dead host
+# and, by default, are also fetched to ~/.deployctl/backups/<project>/<env>/ — a dead host
 # must not take its own backups with it.
 #
 # Usage: backup.sh <run|list|restore|schedule>
@@ -39,7 +39,14 @@ source "$SCRIPT_DIR/common/remote.sh"
 COMMAND="${1:-}"
 readonly HOST="$PRIMARY_HOST"
 readonly BACKUP_DIR="${REMOTE_DIR}/backups"
-readonly LOCAL_DIR="${DEPLOYCTL_PROJECT}/backups"
+# Never inside a repository: a copied deploy directory once carried another
+# client's production dump into a different client's project. DEPLOYCTL_BACKUP_DIR
+# moves it elsewhere (an encrypted volume, a synced folder).
+# An unquoted `~`, not $HOME: cron and stripped CI environments have no HOME (and
+# set -u would abort on it), while bash resolves a bare ~ from the passwd entry.
+# It must stay outside quotes — "~" is never expanded.
+_home=~
+readonly LOCAL_DIR="${DEPLOYCTL_BACKUP_DIR:-${_home}/.deployctl/backups/${COMPOSE_PROJECT}/${DEPLOYCTL_ENV}}"
 readonly KEEP="${BACKUP_KEEP:-7}"
 readonly FETCH="${BACKUP_FETCH:-true}"
 # Must be at least the server's major version: pg_dump refuses to dump a newer
@@ -95,8 +102,8 @@ cmd_run() {
     remote_maybe "$HOST" "cd '${BACKUP_DIR}' && ls -1t *.sql.gz 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f"
 
     if [[ "$FETCH" == "true" ]]; then
-        mkdir -p "$LOCAL_DIR"
-        print_info "fetching a local copy → backups/${file}"
+        mkdir -p "$LOCAL_DIR" && chmod 700 "$LOCAL_DIR"
+        print_info "fetching a local copy → ${LOCAL_DIR}/${file}"
         # shellcheck disable=SC2086
         maybe rsync -az -e "ssh $SSH_OPTS" "${SSH_USER}@${HOST}:${BACKUP_DIR}/${file}" "${LOCAL_DIR}/${file}"
         [[ "${DEPLOYCTL_DRY_RUN:-}" != "1" ]] && chmod 600 "${LOCAL_DIR}/${file}" 2>/dev/null
@@ -118,7 +125,7 @@ cmd_list() {
     fi
     print_info "on ${HOST}:${BACKUP_DIR}"
     remote "$HOST" "ls -lht '${BACKUP_DIR}' 2>/dev/null | grep -v '^total' | sed 's/^/    /'" || print_warning "  none yet"
-    print_info "local (${LOCAL_DIR#"${DEPLOYCTL_PROJECT}"/}/)"
+    print_info "local (${LOCAL_DIR}/)"
     local found=false f
     for f in "$LOCAL_DIR"/*.sql.gz; do
         [[ -e "$f" ]] || break

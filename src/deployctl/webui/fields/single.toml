@@ -21,6 +21,13 @@ default = "deploy"
 help = "Unprivileged user in the docker group. Not root."
 
 [[section.field]]
+key = "SSH_JUMP_HOST"
+label = "Jump host (bastion)"
+target = "env"
+placeholder = "deploy@bastion.example.com"
+help = "Only when the hosts have no SSH reachable from you or from CI — deploys go through this host (ssh ProxyJump). Leave empty to connect directly."
+
+[[section.field]]
 key = "REMOTE_DIR"
 label = "Remote directory"
 target = "env"

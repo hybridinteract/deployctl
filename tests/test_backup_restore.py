@@ -105,3 +105,17 @@ def test_schedule_rejects_a_time_that_is_not_one(calls):
     result = CliRunner().invoke(app, ["backup", "schedule", "--env", "production", "--at", "25:00"])
     assert result.exit_code == 2, result.output
     assert calls == []
+
+
+def test_local_copies_go_to_the_users_home_even_without_home_set(tmp_path):
+    """Never into a repository, and never into a directory literally named ~."""
+    script = f'''
+set -euo pipefail
+source "{DEPLOYCTL}/scripts/common/common.sh"
+eval "$(sed -n '/^_home=~/,/^readonly LOCAL_DIR=/p' "{DEPLOYCTL}/scripts/backup.sh")"
+echo "$LOCAL_DIR"
+'''
+    env = {"PATH": os.environ["PATH"], "COMPOSE_PROJECT": "demo", "DEPLOYCTL_ENV": "production"}
+    out = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=30).stdout.strip()
+    assert out.endswith("/.deployctl/backups/demo/production")
+    assert out.startswith("/") and "~" not in out

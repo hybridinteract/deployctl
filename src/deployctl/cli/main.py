@@ -20,7 +20,9 @@ from .commands import ci as ci_cmd
 from .commands import deploy as deploy_cmd
 from .commands import image as image_cmd
 from .commands import init as init_cmd
+from .commands import migrate_config as migrate_config_cmd
 from .commands import selftest as selftest_cmd
+from .commands import server as server_cmd
 from .commands import setup as setup_cmd
 from .commands import show as show_cmd
 from .commands import ssl as ssl_cmd
@@ -76,11 +78,13 @@ app.command("envs")(show_cmd.envs)
 app.command("selftest")(selftest_cmd.selftest)
 app.command("webui")(webui_cmd.webui)
 app.command("adopt")(adopt_cmd.adopt)
+app.command("migrate-config")(migrate_config_cmd.migrate_config)
 app.add_typer(deploy_cmd.deploy_app)
 app.add_typer(image_cmd.image_app)
 app.add_typer(ci_cmd.ci_app)
 app.add_typer(ssl_cmd.ssl_app)
 app.add_typer(backup_cmd.backup_app)
+app.add_typer(server_cmd.server_app)
 
 
 def main() -> None:

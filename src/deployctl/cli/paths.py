@@ -28,7 +28,6 @@ PROFILES_DIR = TOOL_ROOT / "profiles"
 TEMPLATES_DIR = TOOL_ROOT / "templates"
 SCRIPTS_DIR = TOOL_ROOT / "scripts"
 WEBUI_DIR = TOOL_ROOT / "webui"
-SERVER_DIR = TOOL_ROOT / "server"
 
 # ---- the project --------------------------------------------------------------
 
@@ -216,8 +215,3 @@ def compose_artifact(env: str, role: str) -> pathlib.Path:
 
 def compose_extra_artifact(env: str) -> pathlib.Path:
     return env_root(env) / "compose.extra.yml"
-
-
-def history_file() -> pathlib.Path:
-    """Local record of deployed image tags, used by `deploy rollback`."""
-    return GENERATED_DIR / ".history"

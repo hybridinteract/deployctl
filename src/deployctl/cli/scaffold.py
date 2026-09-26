@@ -59,11 +59,6 @@ MODE=single
 # DNS: A {api_subdomain}.<BASE_DOMAIN> → this server's public IP.
 API_SUBDOMAIN={api_subdomain}
 
-# ---------- Image ----------
-# An immutable tag (a git short sha). Avoid 'latest': it breaks rollback and
-# makes "what is actually running?" unanswerable.
-IMAGE_TAG=
-
 # ---------- Server ----------
 # The address your control machine reaches over SSH.
 HOSTS=""
@@ -113,10 +108,6 @@ MODE=cluster
 # ---------- Domain ----------
 # DNS: A {api_subdomain}.<BASE_DOMAIN> → the LOAD BALANCER's IP, not a host.
 API_SUBDOMAIN={api_subdomain}
-
-# ---------- Image ----------
-# An immutable tag (a git short sha), so every host runs identical bits.
-IMAGE_TAG=
 
 # ---------- Hosts ----------
 # Every app server, space-separated, at the address your control machine reaches

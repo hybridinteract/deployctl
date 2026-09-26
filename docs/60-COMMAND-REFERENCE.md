@@ -14,6 +14,13 @@ Every command takes `--env <name>` (`-e`). It is inferred when only one environm
 configured, and may come from `DEPLOYCTL_ENV`. With several configured and no name given,
 the command stops and lists them rather than guessing.
 
+**Image tags are not configuration.** Once CI deploys, a tag written in `config/` is whatever
+that machine deployed last — stale by design. Each command decides it instead: `--tag` (or
+`$IMAGE_TAG`, which CI sets) first; then, for commands that act on the hosts, the tag the
+primary is **running** — so `deploy update` without `--tag` redeploys the running release, which
+is how a config change goes out; for local commands, the tag last used on this machine. An
+`IMAGE_TAG` still in `config/` is honoured with a deprecation warning; `migrate-config` removes it.
+
 Every `deploy` command takes `--dry-run`, which prints each ssh, rsync and compose command
 instead of running it — and opens no connection at all, so it is safe against production.
 
@@ -34,10 +41,12 @@ Two options go before the command, and apply to all of them:
 picks the deployment shape; `--env` names the environment (default `production`). Run it
 again with a different `--env` to add another. Does not overwrite an existing config.
 
-### `deployctl setup --env E [--force] [--rotate-secrets]`
+### `deployctl setup --env E [--tag T] [--force] [--rotate-secrets]`
 **Touches: local.** Renders `generated/<env>/` — the compose files, nginx config, env file
-and Redis config — from the resolved configuration. `--force` overwrites an existing
-render. `--rotate-secrets` re-mints the generated secrets.
+and Redis config — from the resolved configuration. `--tag` names the image to render; without
+it, the tag last used on this machine (see *Image tags* above). A deploy re-renders with its own
+tag, so this is for inspecting and validating. `--force` overwrites an existing render.
+`--rotate-secrets` re-mints the generated secrets.
 
 > **`--rotate-secrets` logs every user out.** `JWT_SECRET_KEY` signs sessions; changing it
 > invalidates all of them. Without the flag, secrets are minted once and reused forever, so
@@ -58,6 +67,12 @@ copied code is removed with `git rm`. Without `--apply` it only prints the plan.
 when `deploy/` exists, or when the copied code has uncommitted edits that would be lost;
 untracked files are never deleted — they are listed. `--from` names the copy when it is not
 the one found from the current directory.
+
+### `deployctl migrate-config [--apply]`
+**Touches: local.** Brings `config/` up to the current tool. Today: removes `IMAGE_TAG` from
+every `config/<env>.env` — the tag is decided per command now (see *Image tags*) — and keeps
+its value as this machine's last-used tag, so `setup` still works. Prints the plan unless
+`--apply` is given; comments and every other line are left as they were.
 
 ### `deployctl selftest [--skip-docker]`
 **Touches: local.** Renders every supported deployment shape into a temporary directory and
@@ -89,21 +104,56 @@ everything in full; `--key K` prints one value and nothing else, for scripting.
 short SHAs are shown — a moving pointer like `latest` is exactly what should not be pinned.
 Implemented for ghcr.io; needs `REGISTRY_TOKEN` with `read:packages`.
 
-### `deployctl image push --env E [--tag T] [--no-pin] [--allow-dirty]`
+### `deployctl image push --env E [--tag T] [--allow-dirty]`
 **Touches: local + registry.** Builds the image on this machine and pushes it. The tag
-defaults to the current git short SHA, and is written into this environment's config
-afterwards — `--no-pin` skips that. `--allow-dirty` builds despite uncommitted changes;
+defaults to the current git short SHA; deploy it with `deploy update --tag T`. `--allow-dirty`
+builds despite uncommitted changes;
 without it the command refuses, because a tag derived from a SHA that does not describe the
 built bits makes "what is running?" unanswerable.
 
 Useful before CI exists; CI is the better long-term answer.
 
-### `deployctl ci init --env E [--branch B] [--force]`
-**Touches: local.** Writes `.github/workflows/build-image.yml`, which builds and pushes on
-every push to `--branch` (default `main`). `--force` overwrites an existing workflow.
+## Continuous deployment — `ci`
 
-> The workflow bakes `IMAGE_REPO` in at generation time. Change `IMAGE_REPO` later and the
-> two silently disagree — `validate` checks for this.
+The steps of setting up deploys from GitHub Actions, one command each, in the order a
+project goes through them. Every `ci` command needs `gh`, logged in, run from inside the
+application's repository. The whole path, explained: [35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md).
+
+### `deployctl ci connect --env E [--branch B]`
+**Touches: GitHub (read), local.** Checks `gh`, reads the repository and its owner's plan,
+and records where deploy secrets can live as `CI_SCOPE` in `config/common.env`:
+`environment` (the GitHub environment named like this one — needs GitHub Team/Pro for a
+private repository) or `repository` (every plan). A private repository on GitHub Free, or a
+plan this account cannot see, gets `repository`, with a warning that repository secrets are
+readable from any branch. `--branch` saves the deploy branch as `DEPLOY_BRANCH`.
+
+### `deployctl ci init --env E [--branch B] [--force]`
+**Touches: local.** Writes `.github/workflows/`: `build-image.yml` (builds and pushes the
+image, and hands its tag on as the `tag` output) and `deploy.yml` (installs this version of
+deployctl, pinned, and deploys), both **managed** — regenerated from this version's
+templates, with every third-party action pinned to a commit SHA and the deploy job's timeout
+sized to the number of hosts. A managed file that differs is shown as a diff and only
+replaced with `--force`. `ci.yml` is written only when there is none — it is the project's
+own (its checks go there); an existing one is left alone, and if it never calls the two
+workflows, the jobs to add are printed. `--branch` saves `DEPLOY_BRANCH` first.
+
+> The build workflow bakes `IMAGE_REPO` in at generation time. Change `IMAGE_REPO` later and
+> the two silently disagree — `validate` checks for this.
+
+### `deployctl ci setup-key --env E [--rotate] [--repo-level]`
+**Touches: hosts (write), GitHub.** Makes an ssh key only CI uses and puts it where CI needs
+it: generated in a private temporary directory; its public half installed on every host —
+and on `SSH_JUMP_HOST` — prefixed `restrict`, using your own ssh access; then proven to log
+in on its own (no agent) before its private half is uploaded as `DEPLOY_SSH_KEY`. The local
+copy is deleted; only the fingerprint is printed. The key is marked
+`deployctl-ci@<owner/repo>/<env>`: an installed one is only replaced with `--rotate`, which
+removes it from every host and installs the new one.
+
+### `deployctl ci pin-hosts --env E [--repo-level]`
+**Touches: GitHub.** Uploads the host keys this machine already trusts — every host and the
+jump host, from your `known_hosts` — as `DEPLOY_KNOWN_HOSTS`. CI refuses any host key it was
+not given. A host you have never connected to is refused rather than looked up: connect
+once, checking the fingerprint, then run it again.
 
 ### `deployctl ci sync-config --env E [--force] [--repo-level]`
 **Touches: GitHub.** Uploads this environment's `config/` files (`common.env`, `<env>.env`,
@@ -130,11 +180,51 @@ its digest or holds files of another environment. Under GitHub Actions it first 
 every credential in the bundle with `::add-mask::`. `--env` is required, not inferred.
 Existing files with different contents are only replaced with `--force`.
 
+
+### `deployctl ci doctor --env E [--json] [--repo-level]`
+**Touches: GitHub (read).** Checks everything continuous deployment needs — `gh`, the
+secrets' scope, the workflows (present, current for this version, `ci.yml` calling
+`deploy.yml`), `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` covering every host and the jump host,
+the config in GitHub matching this machine's, the install token while deployctl's repository
+is private, and whether `AUTO_DEPLOY` is on — and prints the command that fills each gap.
+`--json` is what the control panel reads. Exit `0` when nothing is missing, `1` otherwise.
+
+### `deployctl ci deploy --env E [--tag T] [--rollback] [--allow-config-change] [--watch]`
+**Touches: GitHub → hosts (write).** Runs the deploy workflow — the same one a merge runs,
+with GitHub's copy of the config and the CI key — and follows it to the end (`--no-watch`
+returns once started). Without `--tag`, the tag the primary is running: a redeploy, which is
+how a config change goes out (`--allow-config-change` lets it change values the hosts run).
+`--rollback` rolls back instead, by default to the release before the running one, and never
+migrates. Runs on `DEPLOY_BRANCH`.
+
+### `deployctl ci runs --env E [--limit N] [--json]`
+**Touches: GitHub (read).** Recent deploys through GitHub, newest first — manual runs and the
+deploys merges triggered (skipped ones, with `AUTO_DEPLOY` off, are left out) — with action,
+tag, outcome and a link.
+
+### `deployctl ci auto-deploy <on|off> --env E`
+**Touches: GitHub.** Sets the repository variable `AUTO_DEPLOY`: on, every push to
+`DEPLOY_BRANCH` that passes its checks deploys itself; off, deploys are `ci deploy`. Always
+at repository level — `ci.yml` reads it before any environment is entered.
+
+---
+
+## Servers
+
+### `deployctl server bootstrap-script --env E [--swap SIZE] [--harden-ssh] [--reboot]`
+**Touches: nothing — prints.** The root script that prepares a fresh Ubuntu server for this
+environment: updates, Docker from Docker's repository, the deploy user (`SSH_USER`, in the
+`docker` group, with root's authorised keys), `REMOTE_DIR` owned by it, swap (`--swap`,
+default `2G`), key-only ssh (`--no-harden-ssh` skips it), and a reboot when the updates
+asked for one (`--no-reboot`). Safe to run again. Only the script is printed on stdout, so
+it can be pasted into a cloud provider's user data or piped:
+`deployctl server bootstrap-script --env E | ssh root@IP 'bash -s'`.
+
 ---
 
 ## Deploying
 
-### `deployctl deploy doctor --env E [--fix]`
+### `deployctl deploy doctor --env E [--tag T] [--fix]`
 **Touches: hosts (read).** Per host: ssh reachable, docker usable without sudo, `REMOTE_DIR`
 writable, permissions on everything a deploy writes or mounts, CPU architecture matches
 `IMAGE_PLATFORM`, and the image tag resolves from that host. It also compares the `.env`
@@ -146,19 +236,28 @@ what a lost or re-created `config/` produces. See `deploy update --allow-secret-
 needing root is printed as an exact command instead — a deploy user that can escalate
 defeats the point of having one.
 
-### `deployctl deploy init --env E`
-**Touches: hosts (write).** First bring-up. Runs doctor, stages artifacts and pulls the
+### `deployctl deploy init --env E [--tag T]`
+**Touches: hosts (write).** First bring-up — new hosts run nothing yet, so pass `--tag` the
+first time. Runs doctor, stages artifacts and pulls the
 image everywhere, migrates once on the primary, then starts hosts primary-first behind a
 health gate. Run once per environment; use `update` after that.
 
-### `deployctl deploy update --env E [--host H] [--allow-secret-change]`
+### `deployctl deploy update --env E [--tag T] [--host H] [--allow-secret-change]`
 **Touches: hosts (write).** The rolling release. Re-renders artifacts, runs doctor,
 migrates once on the primary, then per host: set the running release aside → push → pull →
 `up -d` → reload nginx → health gate → watch every service for `DEPLOY_SETTLE_SECONDS`
-(default 60) → record tag. A host that fails the gate or the watch is reverted to its
-previous release and the roll stops, leaving the rest on the previous release
-(`DEPLOYCTL_NO_REVERT=1` keeps the failed release for inspection). `--host` rolls one host only (no migration, no doctor — but still the
-`.env` comparison), and is recorded in history as a one-host roll, not a release.
+(default 60) → record the tag and who deployed it. Without `--tag`, the running tag is
+redeployed.
+
+A host that fails the gate or the watch is reverted to its previous release and the roll
+stops — and with `REVERT_SCOPE=fleet` (the default) **every host this run already moved is
+put back too**, newest first, each from its own snapshot, so the fleet is never left split
+between two releases. `REVERT_SCOPE=host` reverts only the failed host.
+`DEPLOYCTL_NO_REVERT=1` keeps the failed release for inspection. A completed release is
+appended to the history on the primary; a reverted one is not.
+
+`--host` rolls one host only (no migration, no doctor — but still the `.env` comparison),
+and is recorded as a one-host roll, not a release.
 
 `--allow-secret-change` ships a `.env` that re-keys a generated secret or blanks a key the
 hosts are running with. Without it doctor refuses — the flag is for a deliberate rotation
@@ -166,28 +265,27 @@ hosts are running with. Without it doctor refuses — the flag is for a delibera
 (the deploy workflow sets it) a changed value of **any** key counts, not only the generated
 secrets; the flag is how a deliberate config change gets through there too.
 
-An update refuses a tag that is an ancestor of the one the primary is running: once CI
-deploys, `IMAGE_TAG` in a laptop's config is stale, and deploying it would take production
-backwards while migrating with the older image. Going back on purpose is `deploy rollback`.
+An update refuses a tag that is an ancestor of the one the primary is running: deploying
+it would take production backwards while migrating with the older image. Going back on purpose is `deploy rollback`.
 Tags that are not commits this checkout knows are not compared.
 
 Full walkthrough: [30-OPERATIONS.md § Rolling out an update](30-OPERATIONS.md#rolling-out-an-update).
 
 ### `deployctl deploy rollback --env E [--to TAG]`
-**Touches: hosts (write).** Re-deploys a previous image tag with the same health-gated
-roll, then pins that tag in `config/<env>.env` so the next routine deploy does not silently
-re-deploy the bad build. Defaults to the previous release from local history (one-host rolls,
-rollbacks and another image repository's tags are skipped). An explicit `--to` naming the tag
-config already holds rolls anyway, with a warning: CI deploys do not update config, so the
-hosts may be running something newer.
+**Touches: hosts (write).** Re-deploys a previous image tag with the same health-gated roll
+(and the same fleet-wide revert if it fails). Defaults to the release before the one the
+primary runs, from the history kept on the primary — which CI and every laptop write, so they
+agree (one-host rolls and earlier rollbacks are skipped). Refuses a tag that is already
+running.
 
 > **Nothing is migrated, and nothing is reverted** — only the image moves back. The older
 > image's migrations stop short of the revision the database is already at, so running them
 > fails ("Can't locate revision"); rollback does not try. The older code has to tolerate the
 > newer schema, which is what additive migrations guarantee.
 
-### `deployctl deploy migrate --env E`
-**Touches: hosts (write).** Runs `MIGRATE_CMD` once, on the primary. `update` already does
+### `deployctl deploy migrate --env E [--tag T]`
+**Touches: hosts (write).** Runs `MIGRATE_CMD` once, on the primary, with the running image
+unless `--tag` names another. `update` already does
 this; use it alone only to re-run a migration that failed.
 
 ### `deployctl deploy restart --env E [--host H]`
@@ -197,8 +295,11 @@ this; use it alone only to re-run a migration that failed.
 **Touches: hosts (write).** `compose down` on every host. **The site goes down and stays
 down** until `init` or `update`. Confirms first unless `ASSUME_YES=1`.
 
-### `deployctl deploy status --env E`
-**Touches: hosts (read).** Service status and the deployed tag on every host.
+### `deployctl deploy status --env E [--json]`
+**Touches: hosts (read).** Service status and the deployed tag on every host. `--json` prints
+each host's tag, when and by whom it was deployed (an Actions run URL, or `user@machine`),
+and every service's state, health and restart count — plus `split` when hosts disagree on
+the tag.
 
 ### `deployctl deploy logs --env E [--host H]`
 **Touches: hosts (read).** Follows `docker compose logs -f`. Defaults to the primary.
@@ -207,8 +308,9 @@ down** until `init` or `update`. Confirms first unless `ASSUME_YES=1`.
 **Touches: hosts (read).** Interactive shell in `REMOTE_DIR`, using your own ssh agent.
 
 ### `deployctl deploy history --env E`
-**Touches: local.** The locally recorded deploys for this environment — what `rollback`
-consults when no `--to` is given.
+**Touches: hosts (read).** The environment's releases, from the history kept on the
+primary: when, which tag, what kind (release, rollback, first bring-up, one-host roll) and
+who — the record `rollback` consults when no `--to` is given.
 
 ### `deployctl deploy unlock --env E`
 **Touches: hosts (write).** Every host-changing command (init, update, rollback, migrate,
@@ -252,7 +354,7 @@ bootstrap one.
 
 ### `deployctl backup run --env E [--keep N] [--no-fetch]`
 **Touches: hosts (write).** `pg_dump` on the primary, prune to the last `N` (default 7),
-then fetch a copy to `deploy/backups/`. A host that dies must not take its own backups
+then fetch a copy to `~/.deployctl/backups/<project>/<env>/` on this machine — never into a repository (`DEPLOYCTL_BACKUP_DIR` moves it). A host that dies must not take its own backups
 with it — `--no-fetch` leaves the dump on the host only.
 
 ### `deployctl backup schedule --env E [--at HH:MM] [--keep N] [--off]`

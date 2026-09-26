@@ -7,10 +7,9 @@ import subprocess
 
 import typer
 
-from .. import paths, registry, runner, ui
+from .. import paths, registry, runner, tags, ui
 from ..config import Config
 from ..context import env_option, load_config
-from ..envfile import patch_env_file
 
 image_app = typer.Typer(
     name="image",
@@ -42,7 +41,6 @@ def _resolve_tag(cfg: Config, explicit: str | None) -> str:
 def push(
     env: str = env_option(),
     tag: str = typer.Option(None, "--tag", "-t", help="Image tag. Defaults to the current git short SHA."),
-    pin: bool = typer.Option(True, "--pin/--no-pin", help="Write the tag into this environment's config."),
     allow_dirty: bool = typer.Option(False, "--allow-dirty", help="Build even with uncommitted changes."),
 ) -> None:
     """Build the image on this machine and push it to the registry.
@@ -105,10 +103,8 @@ def push(
             raise typer.Exit(exc.returncode) from exc
         ui.ok(f"pushed {ref}")
 
-    if pin:
-        patch_env_file(paths.config_file(cfg.env), {"IMAGE_TAG": tag})
-        ui.ok(f"pinned IMAGE_TAG={tag} in config/{cfg.env}.env")
-        ui.info(f"Next: deployctl setup --env {cfg.env} && deployctl deploy update --env {cfg.env}")
+    # Not written into config: the tag is chosen per deploy (cli/tags.py).
+    ui.info(f"Next: deployctl deploy update --env {cfg.env} --tag {tag}")
 
 
 def _build(reference: str, target: str, dockerfile: str, context: str, platform: str) -> None:
@@ -183,7 +179,8 @@ def tags(
         ui.warn("no git-sha tags found for this image")
         raise typer.Exit(2)
 
-    current = cfg.raw["IMAGE_TAG"]
+    # Registry only — no ssh here; "deployed" is the tag this machine last deployed.
+    current = tags.cached(cfg.env)
     for index, item in enumerate(found):
         marks = []
         if index == 0:

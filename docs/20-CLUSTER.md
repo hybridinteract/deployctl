@@ -68,9 +68,13 @@ manage them from the control panel).
 - Note the load balancer's public IP.
 
 ### Firewall
-- **Inbound:** `80` from the load balancer only; `22` from your IP only. Nothing else.
+- **Inbound:** `80` from the load balancer only; `22` from whoever deploys. Nothing else.
   In particular, do not expose `80` to the internet — clients should only ever arrive
   through the LB.
+- **Deploying from CI:** GitHub's runners connect from a large, changing set of addresses,
+  so "22 from your IP only" shuts them out. Either put the hosts on a tailnet the job joins,
+  or keep :22 private and set `SSH_JUMP_HOST` to a bastion that can reach them — see
+  [35-CONTINUOUS-DEPLOYMENT.md § Reaching the hosts](35-CONTINUOUS-DEPLOYMENT.md#reaching-the-hosts).
 - **Outbound:** the VPC (databases) and `443` (registry, object storage).
 - Use the cloud firewall, and leave the host firewall (ufw) inactive. Running both is a
   well-known way to lock yourself out of your own servers.
@@ -88,10 +92,17 @@ A    api.example.com    →    <load balancer IP>       ← the LB, not a host
 
 ## 2. Bootstrap each host
 
-Identical on every host, once. See
-**[10-SINGLE-SERVER.md](10-SINGLE-SERVER.md#1-bootstrap-the-host-once-by-hand)** — the same
-steps: Docker, a `deploy` user in the `docker` group with your key, `REMOTE_DIR` owned by
-it, swap, unattended upgrades. Keep every host on **UTC**.
+Identical on every host, once — the one step that needs root, rendered for this
+environment:
+
+```bash
+deployctl server bootstrap-script --env production > bootstrap.sh
+```
+
+Paste it into each droplet's user data when you create it, or run it:
+`ssh root@<host-ip> 'bash -s' < bootstrap.sh`. Docker, a `deploy` user in the `docker`
+group with your key, `REMOTE_DIR` owned by it, swap, key-only ssh, UTC — the steps of
+[10-SINGLE-SERVER.md](10-SINGLE-SERVER.md#1-bootstrap-the-host-once-by-hand), as one script.
 
 Verify each one:
 
@@ -127,7 +138,6 @@ REGISTRY_TOKEN=ghp_…                 # classic PAT, read:packages only
 ```sh
 MODE=cluster
 API_SUBDOMAIN=api
-IMAGE_TAG=fb31c25
 
 HOSTS="203.0.113.10 203.0.113.11"    # ssh-reachable addresses
 PRIMARY_HOST=203.0.113.10            # scheduler + migrations; must be in HOSTS
@@ -166,12 +176,12 @@ if you mount the provider's CA into your image.
 
 ```bash
 deployctl ci init --branch main       # then enable read/write workflow permissions
-git push                               # → the run Summary prints IMAGE_TAG
+git push                               # → the run Summary prints the image tag
 
 deployctl setup    --env production
 deployctl validate --env production
 deployctl doctor   --env production   # every host: ssh, docker, permissions, image, arch
-deployctl deploy init --env production
+deployctl deploy init --env production --tag <tag>
 ```
 
 Verify through the load balancer, not a host:
@@ -205,14 +215,19 @@ scoped, because trusting it from anywhere lets a client spoof its way past rate 
 ## 6. Rolling updates
 
 ```bash
-$EDITOR config/production.env            # bump IMAGE_TAG
-deployctl deploy update --env production
+deployctl ci deploy --env production --tag <tag>     # through GitHub — or a merge, with AUTO_DEPLOY on
+deployctl deploy update --env production --tag <tag> # straight from this machine
 ```
 
 What happens: migrations run once on the primary, then each host in turn is synced,
-pulled, restarted, nginx-reloaded and **health-gated**. The roll stops at the first host
-that does not come back healthy — so the remaining hosts are still serving the previous
-release while you investigate.
+pulled, restarted, nginx-reloaded, **health-gated**, and watched for a minute
+(`DEPLOY_SETTLE_SECONDS`) for any service that restarts or turns unhealthy.
+
+When a host fails, **the whole fleet goes back** (`REVERT_SCOPE=fleet`, the default): the
+failed host is restored from its snapshot, then every host this run already moved, newest
+first — so the load balancer is never left in front of two releases, even when nobody is
+watching a deploy that ran from CI. Hosts not yet reached were never touched.
+`REVERT_SCOPE=host` reverts only the failed host and tells you the fleet is split.
 
 Prove it, from another terminal:
 
@@ -232,7 +247,8 @@ load balancer's API — neither is built in.
 If a release turns out to be bad after it fully rolled:
 
 ```bash
-deployctl deploy rollback --env production        # back to the previous tag
+deployctl ci deploy --env production --rollback   # back to the previous release, through GitHub
+deployctl deploy rollback --env production        # the same, from this machine
 ```
 
 Rollback moves the image only — **migrations are not reverted**. Prefer additive,
@@ -249,7 +265,10 @@ Append-only:
 2. Add it to the load balancer's backends.
 3. Add it to **both** databases' trusted sources.
 4. Add its address to `HOSTS` in `config/production.env`.
-5. `deployctl setup --env production && deployctl deploy update --env production`
+5. With CI: `deployctl ci setup-key --env production --rotate` (the key onto the new host),
+   `deployctl ci pin-hosts` (its host key — connect once first), `deployctl ci sync-config`
+   (the new `HOSTS`), `deployctl ci init --force` (the job's timeout grows with the fleet).
+6. `deployctl ci deploy --env production` — or from this machine, `deployctl deploy update --env production`.
 
 No re-architecture. Do not change `PRIMARY_HOST` unless you mean to move the scheduler.
 

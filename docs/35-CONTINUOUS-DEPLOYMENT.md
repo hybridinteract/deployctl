@@ -1,192 +1,89 @@
 # 35 — Continuous deployment (GitHub Actions)
 
-A merge to the deploy branch builds the image, and — once switched on — deploys it. The
-deploy is deployctl itself, run by a GitHub Actions job instead of your laptop: the same
-render, doctor, migrate-once, host-by-host health gate and deploy lock. Your laptop and
-the control panel keep working, and share that lock.
+A merge to the deploy branch builds the image and — once switched on — deploys it. The
+deploy is deployctl itself, installed in a GitHub Actions job instead of run from your
+laptop: the same render, doctor, migrate-once, host-by-host health gate, service watch,
+fleet-wide revert and deploy lock. Your laptop and the control panel keep working beside it
+and share that lock.
 
 ```
-PR ─► prod ─merge─► ci.yml: tests · migrations · lint · merges
-                        └─► publish (build-image.yml) ──tag──► deploy (deploy.yml)
-                                                                 environment: production
-                                                                 ssh with the CI key, pinned host keys
-                                                                 config from the DEPLOYCTL_CONFIG secret
-                                                                 deployctl deploy update
+PR ─► deploy branch ─merge─► ci.yml: your checks
+                                 └─► build-image.yml ──tag──► deploy.yml (with AUTO_DEPLOY on)
+                                                                installs deployctl vX.Y.Z (pinned)
+                                                                ssh with the CI key, pinned host keys
+                                                                config from the DEPLOYCTL_CONFIG secret
+                                                                deployctl deploy update --tag <that tag>
 
-Manual:     Actions → deploy → Run workflow   (a tag · update | rollback)
-Emergency:  your laptop or the panel — same engine, same lock on the primary
+By hand:    deployctl ci deploy [--tag T | --rollback]   (the same workflow, from your terminal)
+Emergency:  deployctl deploy update --tag T              (straight over ssh, same lock)
 ```
+
+**Where the tag comes from.** The build publishes `<short-sha>` and hands exactly that tag
+to the deploy; nothing recomputes it. A manual deploy without `--tag` redeploys what the
+primary is running — which is how a config change goes out. The history of what was
+deployed, by whom (an Actions run, or `user@machine`), lives on the primary, so a laptop and
+CI always agree on "the previous release".
 
 ---
 
-## 1. What you set up once
+## Setting it up — one command per step
 
-| What | Where | Step |
+Run these from the application's repository, with `gh` logged in (`gh auth login`). After
+each, `deployctl ci doctor` shows what is left.
+
+| # | Command | What it does |
 |---|---|---|
-| A CI-only ssh key pair | private half → GitHub secret, public half → the server | 2, 5 |
-| The server's host key | GitHub variable, so CI never trusts on first use | 3 |
-| A GitHub environment `production` | locked to the `prod` branch (Team / Pro plans) | 4 |
-| Your `config/` | one GitHub secret, uploaded by `deployctl ci sync-config` | 6 |
-| `AUTO_DEPLOY=true` | repository variable — the on switch | 8 |
+| 1 | `deployctl ci connect --env production --branch prod` | Finds the repository and its plan, decides where secrets live (`CI_SCOPE`), saves the deploy branch |
+| 2 | `deployctl ci init --env production` | Writes `build-image.yml` and `deploy.yml` (managed), and `ci.yml` if there is none (yours) |
+| 3 | `deployctl ci setup-key --env production` | A CI-only ssh key: installed on every host and the jump host, proven, private half into GitHub, local copy deleted |
+| 4 | `deployctl ci pin-hosts --env production` | The host keys your machine already trusts, into GitHub — CI refuses any other |
+| 5 | `deployctl ci sync-config --env production` | Your `config/` into GitHub as one secret plus its digest |
+| 6 | `deployctl ci doctor --env production` | Everything above, checked |
+| 7 | commit and push the workflows | the deploy workflow must be on the default branch and the deploy branch |
+| 8 | `deployctl ci deploy --env production` | A first deploy by hand — the running tag, so nothing changes but the proof |
+| 9 | `deployctl ci auto-deploy on --env production` | From now on a merge deploys itself |
 
-Nothing on the server changes except one line in `authorized_keys`.
+Two things only you can do, once, on GitHub:
 
-> **Your GitHub plan decides where secrets live.** A **private repository on GitHub Free**
-> has no environment secrets, no environment variables, no deployment-branch rules and no
-> branch protection. Everything then goes at **repository** level (`--repo-level`, and
-> `gh secret set` without `--env`), and two things weaken:
->
-> - repository secrets are readable by a workflow on **any** branch, so everyone with write
->   access can reach the ssh key — root on your servers;
-> - nothing stops a direct push to `prod`, which now deploys.
->
-> The workflow still refuses runs from any branch but `prod`, but that is a guard against
-> accidents, not against someone with write access. **GitHub Team** (per user, per month)
-> gives both back: environment secrets readable only from `prod`, and a protected `prod`.
-> For client production, that is worth it. The workflow is the same either way —
-> `secrets.X` reads the environment's value first, then the repository's.
+- **Workflow permissions** — Settings → Actions → General → "Read and write permissions", or
+  the image push fails with `denied: permission_denied`.
+- **While deployctl's repository is private**, the deploy job needs a token to install it: a
+  fine-grained personal access token with *Contents: read* on that repository, stored as
+  `DEPLOYCTL_INSTALL_TOKEN` (`gh secret set DEPLOYCTL_INSTALL_TOKEN`). `ci doctor` says when
+  it is missing, and stops asking once the repository is public.
 
-> **A repository "Deploy key" is not this.** Settings → Deploy keys lets a *machine* clone
-> or push the *repository*. CI needs the opposite direction — to log in to the *server* —
-> which is an ssh key pair whose private half is an Actions secret. The server never needs
-> the repository at all: it pulls images.
+### Your GitHub plan decides where secrets live
 
----
+A **private repository on GitHub Free** has no environment secrets, no deployment-branch
+rules and no branch protection, so `ci connect` sets `CI_SCOPE=repository`: everything goes
+on the repository. Two things weaken there — repository secrets are readable by a workflow on
+**any** branch, so everyone with write access can reach the ssh key (root on your hosts), and
+nothing stops a direct push to the deploy branch, which now deploys. The workflow still
+refuses runs from any other branch, but that guards against accidents, not against someone
+with write access. **GitHub Team** gives both back, and nothing else changes: `ci connect`
+switches to `environment` scope, and the same workflow reads the environment's secrets first.
 
-## 2. Make the CI key — on your laptop
+### The CI key
 
-Generate it on your laptop, not the server: the private half is going to GitHub, and a
-private key that also sits on the server it unlocks protects nothing. Use a new key rather
-than your own — it can then be revoked without locking you out, and the server's
-`authorized_keys` says which logins are CI.
+`ci setup-key` never lets the private key touch disk outside a private temporary directory,
+and deletes it: GitHub holds the only copy — lost means `ci setup-key --rotate`, which
+replaces it on every host. The public half is marked `deployctl-ci@<owner/repo>/<env>` and
+installed with `restrict` (no forwarding, no PTY). The deploy user is in the `docker` group,
+which is root-equivalent on the host: treat the key as root.
 
-```bash
-ssh-keygen -t ed25519 -N '' -C 'github-actions@<repo>' -f ~/.ssh/<project>_ci_deploy
-```
+### Reaching the hosts
 
-`-N ''` means no passphrase: nobody is there to type one. The file's protection is that it
-leaves your laptop for GitHub in step 5 and is then deleted.
+GitHub's runners connect from a large, changing set of addresses. Three ways in:
 
-Install the public half with the access you already have. Prefix it with `restrict`, which
-turns off port, agent and X11 forwarding and PTYs — none of which a deploy uses:
-
-```bash
-ssh <SSH_USER>@<host> "cat >> ~/.ssh/authorized_keys" <<< "restrict $(cat ~/.ssh/<project>_ci_deploy.pub)"
-```
-
-Prove it works as CI will use it — only that key, no agent:
-
-```bash
-ssh -i ~/.ssh/<project>_ci_deploy -o IdentitiesOnly=yes -o IdentityAgent=none <SSH_USER>@<host> 'docker ps >/dev/null && echo ok'
-```
-
-> The deploy user is in the `docker` group, which is root-equivalent on that host. Treat
-> this key as root: it lives only in the GitHub environment secret, scoped to one branch.
-
----
-
-## 3. Pin the server's host key
-
-Your laptop has connected before, so its `known_hosts` already holds the key you trusted.
-Copy that entry, for every address in `HOSTS`:
-
-```bash
-ssh-keygen -F <host> | grep -v '^#'
-```
-
-That output is the `DEPLOY_KNOWN_HOSTS` variable. The workflow sets
-`DEPLOYCTL_SSH_STRICT=1`, so a host missing from it fails with *Host key verification
-failed* instead of being trusted on sight — on a fresh runner, "accept new" would mean
-trusting whatever answers on :22, every run.
-
----
-
-## 4. Create the GitHub environment (Team / Pro / public repositories)
-
-On GitHub Free with a private repository, skip this step: the workflow still records
-Deployments under the name `production`, but there is nothing to configure.
-
-**Settings → Environments → New environment → `production`** (the name must match
-`config/<env>.env`).
-
-- **Deployment branches and tags → Selected branches → `prod`.** Only runs from `prod` can
-  read this environment's secrets — a workflow started from any other branch is refused.
-- **Required reviewers** are optional: a button someone presses before each deploy. Merging
-  to `prod` is already the approval when the branch is protected (below). Availability on
-  private repositories depends on your plan.
-
-And protect the branch, because merging to it now deploys:
-**Settings → Rules → Rulesets → New branch ruleset**, target `prod`: require a pull
-request, require the status checks `Tests (no database)`, `Migrations on a fresh Postgres`,
-`Lint` and `Merges keep both sides`, block force pushes and deletions.
-
----
-
-## 5. Secrets and variables
-
-On the **`production` environment** where your plan has one — environment scope is what
-the branch rule protects — otherwise on the **repository**:
-
-| Name | Kind | Value |
-|---|---|---|
-| `DEPLOY_SSH_KEY` | secret | the private key from step 2 |
-| `DEPLOY_KNOWN_HOSTS` | variable | the lines from step 3 |
-| `APP_URL` | variable | optional — e.g. `https://api.<domain>`; linked from each Deployment |
-| `DEPLOYCTL_CONFIG` + `DEPLOYCTL_CONFIG_DIGEST` | secret + variable | step 6 sets both |
-
-```bash
-# with an environment (Team / Pro):   add  --env production  to each gh command
-gh secret set DEPLOY_SSH_KEY < ~/.ssh/<project>_ci_deploy
-gh variable set DEPLOY_KNOWN_HOSTS --body "$(ssh-keygen -F <host> | grep -v '^#')"
-rm ~/.ssh/<project>_ci_deploy        # GitHub holds the only copy now; lost = make a new one
-```
-
-Optional, at repository or organisation level: `SLACK_WEBHOOK_URL` (a failed deploy posts
-there; otherwise GitHub's failure email is the alert).
-
----
-
-## 6. Upload the config
-
-CI has no `config/`. `ci sync-config` packs this environment's four files into one secret,
-with a digest beside it:
-
-```bash
-deployctl ci sync-config --env production    # GitHub Free, private repo: add --repo-level
-deployctl ci status      --env production    # "matches" — the laptop and CI agree
-```
-
-**Re-run it after every config change made on this machine** — in the panel or by hand.
-If you forget, nothing is silently reverted: the workflow sets `DEPLOYCTL_CONFIG_STRICT=1`,
-which refuses to change any value the servers are running with, and names the keys.
-
-What is inside, and what it cannot contain: only `common.env`, `<env>.env`, `app.<env>.env`
-and `secrets.<env>.env`. The job masks every credential in them in the log, and refuses a
-bundle for another environment or one that does not match its digest.
-
----
-
-## 7. First deploy — by hand, with the tag already running
-
-Before automating, run it once where the outcome is known. Deploy the tag production is
-already on: it proves the key, the host key, the config and the registry login end to end,
-and changes nothing.
-
-```bash
-deployctl deploy status --env production        # "deployed tag: <sha>"
-gh workflow run deploy.yml --ref prod -f environment=production -f tag=<sha> -f action=update
-gh run watch
-```
-
-(Or Actions → **deploy** → Run workflow, branch `prod`.)
-
----
-
-## 8. Switch it on
-
-**Settings → Secrets and variables → Actions → Variables → New repository variable:**
-`AUTO_DEPLOY` = `true`. From the next merge to `prod`, `ci.yml` hands the tag it just
-published to `deploy.yml`. Set it to anything else to go back to deploying by hand.
+- **Port 22 open** to the internet, key-only (`server bootstrap-script` turns passwords
+  off). Common and acceptable for a single server.
+- **A tailnet** — the job joins your Tailscale network for its duration, and :22 need not be
+  public at all. Set the variable `TAILSCALE_TAGS` (e.g. `tag:ci`) and the secrets
+  `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` (an OAuth client with the writable `auth_keys`
+  scope); point `HOSTS` at the tailnet addresses and re-run `ci pin-hosts`.
+- **A jump host** — `SSH_JUMP_HOST=deploy@bastion.example.com` in `config/<env>.env`. Every
+  connection goes through it (ssh `ProxyJump`); `ci setup-key` installs the CI key there too
+  and `ci pin-hosts` pins its host key. The usual shape for a fleet on a private network.
 
 ---
 
@@ -194,29 +91,19 @@ published to `deploy.yml`. Set it to anything else to go back to deploying by ha
 
 | You want to | Do |
 |---|---|
-| Ship code | Merge the PR into `prod`. |
-| Change config (a key, a worker count) | Panel → Save → `deployctl ci sync-config --env production` → Actions → deploy, the **running** tag, `allow_config_change` ticked. |
+| Ship code | Merge into the deploy branch. |
+| Change config (a key, a worker count) | Panel → Save, or edit `config/` → `deployctl ci sync-config` → `deployctl ci deploy --allow-config-change` (redeploys the running tag with the new config). |
 | Ship code that needs a new key | The config change first (row above), then merge. |
-| Roll back | Actions → deploy, the previous tag from **Code → Deployments**, action `rollback`. Never migrates. |
-| Deploy from the laptop anyway | As before. Pick the tag production runs or a newer one — `deploy update` refuses a tag older than the running one, which is what a laptop's stale `IMAGE_TAG` would be. |
+| Roll back | `deployctl ci deploy --rollback` — the release before the running one; never migrates. `--tag T` for a specific one. |
+| See what happened | `deployctl ci runs`, and `deployctl deploy history` for what each release was and who shipped it. |
+| Deploy with GitHub down | `deployctl deploy update --tag T` from a laptop with the config — same engine, same lock. It refuses a tag older than the running one. |
 
----
+**If you forget `sync-config`** after a config change, nothing is silently reverted: the
+workflow refuses to change any value the hosts run with and names the keys.
 
-## Reaching the server: open :22 or a tailnet
-
-GitHub's runners connect from a large, changing set of addresses, so the workflow needs
-:22 reachable from the internet — check your cloud firewall allows it. With key-only
-login (`PasswordAuthentication no`, `PermitRootLogin no`) that is a common, acceptable
-setup.
-
-The stronger one closes :22 to the internet entirely: install Tailscale on the server, and
-the job joins your tailnet for its duration. Set the variable `TAILSCALE_TAGS` (e.g.
-`tag:ci`) and the secrets `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` (an OAuth client with the
-writable `auth_keys` scope and that tag); the workflow's Tailscale step runs only when
-`TAILSCALE_TAGS` is set. Point `HOSTS` at the tailnet names — for your laptop too — and
-re-pin `DEPLOY_KNOWN_HOSTS` for them. Tailscale's access rules can then let `tag:ci` reach
-only port 22 on that client's servers, and `authorized_keys` can add
-`from="100.64.0.0/10"` to accept the CI key only from the tailnet.
+**A failed release** is reverted on the host that failed and on every host the run already
+moved (`REVERT_SCOPE=fleet`), so the fleet is never left split between two releases, and the
+run goes red. Migrations are not reverted; the older code runs on the newer schema.
 
 ---
 
@@ -224,13 +111,14 @@ only port 22 on that client's servers, and `authorized_keys` can add
 
 | The job says | Meaning |
 |---|---|
-| `deploys run only from prod` | The run was started from another branch. Run it from `prod`. |
-| `DEPLOYCTL_CONFIG is empty` | Never uploaded, or uploaded to the other scope — environment vs `--repo-level`. |
-| `does not match DEPLOYCTL_CONFIG_DIGEST` | Secret and variable were set separately. `ci sync-config --force`. |
-| `Host key verification failed` | An address in `HOSTS` is missing from `DEPLOY_KNOWN_HOSTS` (step 3). |
-| `Permission denied (publickey)` | The public key is not in the deploy user's `authorized_keys`, or the secret holds the wrong half. |
-| `would CHANGE config values … running with` | GitHub's config copy differs from the live one. Stale? `ci sync-config`. Intended? Re-run with `allow_config_change`. |
-| `refusing to generate new ones (DEPLOYCTL_NO_MINT=1)` | The uploaded bundle has no `secrets.<env>.env` values. Re-sync from the machine that has them. |
-| `… is running X, which is NEWER than Y` | An update to an older tag. That is a rollback. |
-| `another run holds the deploy lock` | Shows who — a laptop, or a link to the Actions run. |
-| Job waits and never starts | Concurrency: another deploy to this environment is still running. |
+| `deploys run only from <branch>` | The run was started from another branch. |
+| `DEPLOYCTL_CONFIG is empty` | Never uploaded, or uploaded to the other scope — `ci doctor`. |
+| `does not match DEPLOYCTL_CONFIG_DIGEST` | Secret and variable were set separately: `ci sync-config --force`. |
+| `Host key verification failed` | A host (or the jump host) is missing from `DEPLOY_KNOWN_HOSTS`: `ci pin-hosts`. |
+| `Permission denied (publickey)` | The CI key is not on that host: `ci setup-key --rotate`. |
+| Installing deployctl fails with 404 / auth | `DEPLOYCTL_INSTALL_TOKEN` missing or without access to deployctl's repository. |
+| `would CHANGE config values … running with` | GitHub's config differs from the hosts'. Stale? `ci sync-config`. Intended? `ci deploy --allow-config-change`. |
+| `refusing to generate new ones (DEPLOYCTL_NO_MINT=1)` | The uploaded bundle has no `secrets.<env>.env` values — re-sync from the machine that has them. |
+| `… is running X, which is NEWER than Y` | An update to an older tag — that is a rollback. |
+| `another run holds the deploy lock` | Shows whose — a laptop, or a link to the Actions run. |
+| Job waits and never starts | Another deploy to this environment is still running. |
