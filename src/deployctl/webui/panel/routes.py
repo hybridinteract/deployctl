@@ -11,18 +11,21 @@ in the environment's host list.
 from __future__ import annotations
 
 import html
+import os
+import re
 import shlex
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
-from deployctl.cli import paths, registry
+from deployctl.cli import paths, registry, transfer
 
 from . import jobs, live, security, state
 from .actions import ACTIONS, ROW_ACTIONS, ParamError, available, board, ci_fix
-from .runner import run_capture, sse_run
+from .runner import run_capture, run_json, sse_run
 from .terminal import open_native_terminal, term_result
 
 router = APIRouter()
@@ -42,7 +45,17 @@ LIVE_PARTS: dict[str, tuple[str, ...]] = {
     "history": ("server", "history"),
     "checklist": ("ci",),
     "runs": ("runs",),
+    # Your access on this machine: the full card (Setup), and the same card only
+    # when something is missing (top of Operate).
+    "access": ("server", "ci"),
+    "access-alert": ("server", "ci"),
 }
+
+#: An upload larger than this is not a config export (they are a few kilobytes).
+_IMPORT_MAX = 1024 * 1024
+#: The only names the download route serves — what `config export` writes.
+_EXPORT_NAME = re.compile(r"[a-z0-9-]+-config-\d{4}-\d{2}-\d{2}-\d{6}(?:-\d+)?\.enc")
+_PASSPHRASE_ENV = "DEPLOYCTL_PASSPHRASE"
 
 
 def _env_or_404(requested: str | None) -> str:
@@ -58,7 +71,14 @@ def _env_or_404(requested: str | None) -> str:
 
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request, env: str | None = None):
-    """The single-page panel for one environment."""
+    """The single-page panel for one environment — or, before there is any, the start page."""
+    if not state.environments():
+        # A clone with no config on this machine yet: the one useful thing is to
+        # import the file a teammate exported (or learn how to start a project).
+        return templates.TemplateResponse(request, "start.html", {
+            "env": "", "summary": None, "token": security.TOKEN,
+            "project": transfer.project_name(), "repository": transfer.repository(),
+        })
     env = _env_or_404(env)
     cfg = state.load(env)
     local = live.local_facts(cfg)
@@ -128,6 +148,77 @@ def config_problems(request: Request, env: str):
     """What validation says about the saved configuration — re-fetched after each Save."""
     env = _env_or_404(env)
     return templates.TemplateResponse(request, "_problems.html", {"summary": state.summary(env)})
+
+
+# ---- hand the configuration on: export and import ----------------------------------------
+
+
+@router.post("/config/export", response_class=HTMLResponse)
+def config_export(request: Request):
+    """Export every environment to config/exports/ with a passphrase made here, shown once.
+
+    Runs `deployctl config export` — the passphrase travels in that one child's
+    environment, never in argv or a URL.
+    """
+    if not state.environments():
+        raise HTTPException(status_code=404, detail="nothing to export yet")
+    passphrase = transfer.generate_passphrase()
+    result, error = run_json(["config", "export", "--json"], timeout=120, extra_env={_PASSPHRASE_ENV: passphrase})
+    ok = bool(result and result.get("ok"))
+    return templates.TemplateResponse(request, "_export_result.html", {
+        "ok": ok, "result": result or {}, "error": error or (result or {}).get("error", ""),
+        "passphrase": passphrase if ok else "", "token": security.TOKEN,
+    })
+
+
+@router.get("/config/exports/{name}")
+def config_export_file(name: str):
+    """Download one export — only a name `config export` writes, only from config/exports/."""
+    path = paths.exports_dir() / name
+    if not _EXPORT_NAME.fullmatch(name) or not path.is_file():
+        raise HTTPException(status_code=404, detail="no such export")
+    return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
+@router.post("/config/import", response_class=HTMLResponse)
+async def config_import(request: Request):
+    """Preview, then apply, the file a teammate exported. Nothing is written by a preview.
+
+    The upload is staged, owner-only, in config/imports/ (ignored by git) and handed
+    to `deployctl config import`; a preview's copy, or a failed import's, is removed
+    straight away. The browser sends the file again to apply, so the server keeps
+    neither the file nor the passphrase between the two steps.
+    """
+    form = await request.form()
+    stage = str(form.get("stage", ""))
+    upload = form.get("file")
+    passphrase = str(form.get("passphrase", ""))
+
+    def result(**context):
+        return templates.TemplateResponse(request, "_import_result.html", {"stage": stage, **context})
+
+    if stage not in ("preview", "apply") or upload is None or not hasattr(upload, "read"):
+        return result(error="Choose the file a teammate exported.")
+    if not passphrase:
+        return result(error="Type the passphrase that came with the file.")
+    data = await upload.read(_IMPORT_MAX + 1)
+    if len(data) > _IMPORT_MAX:
+        return result(error="That file is far too large to be a configuration export.")
+
+    staged = transfer.ensure_folder(paths.imports_dir()) / "panel-upload.enc"
+    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+    argv = ["config", "import", str(staged), "--json"]
+    if stage == "preview":
+        argv += ["--preview", "--keep"]
+    elif form.get("force") == "1":
+        argv.append("--force")
+    outcome, error = await run_in_threadpool(run_json, argv, 120, {_PASSPHRASE_ENV: passphrase})
+    ok = bool(outcome and outcome.get("ok"))
+    if stage == "preview" or not ok:
+        staged.unlink(missing_ok=True)
+    return result(ok=ok, outcome=outcome or {}, error=error or (outcome or {}).get("error", ""))
 
 
 @router.get("/config/preview", response_class=PlainTextResponse)
@@ -232,6 +323,10 @@ def live_part(request: Request, part: str, env: str, fresh: int = 0):
     context = {"env": env, "live": live, **facts}
     if part == "journey":
         context["journey"] = live.journey(live.local_facts(cfg), facts["server"], facts["ci"])
+    if part in ("access", "access-alert"):
+        context["access"] = live.access(live.local_facts(cfg), facts["server"], facts["ci"])
+        context["alert_only"] = part == "access-alert"
+        context["public_key"] = live.public_key()
     if part in ("checklist", "history"):
         # Buttons render only for actions that apply here — the same list /run checks.
         context["usable"] = {a.id: a for a in available(cfg)}
@@ -240,7 +335,8 @@ def live_part(request: Request, part: str, env: str, fresh: int = 0):
     if part == "history" and facts["history"].ok:
         running = facts["server"].data.get("tag") if facts["server"].ok else None
         context["rows"] = live.history_rows(facts["history"].data.get("entries", []), running)
-    return templates.TemplateResponse(request, f"_live_{part}.html", context)
+    template = "_live_access.html" if part.startswith("access") else f"_live_{part}.html"
+    return templates.TemplateResponse(request, template, context)
 
 
 @router.get("/image-tags", response_class=HTMLResponse)

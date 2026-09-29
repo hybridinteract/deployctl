@@ -1,0 +1,16 @@
+{#- An export just written: the passphrase, shown this once, and the download. -#}
+{% from "_macros.html" import codeblock, pill %}
+{% if not ok %}
+<p class="callout danger">Export failed: {{ error }}</p>
+{% else %}
+{% set s = result.summary %}
+<div class="export-done">
+  <p>{{ pill('ok', 'Exported') }} {{ s.environments | join(', ') }} —
+    <span class="dim">{{ s.files | length }} files, nobody's registry login.</span></p>
+  <p class="lede">Passphrase — <b>shown this once</b>. Send it by a different channel than the file:</p>
+  {{ codeblock('exportPassphrase', passphrase) }}
+  <a class="btn" href="/config/exports/{{ result.name }}?t={{ token }}" download="{{ result.name }}">Download {{ result.name }}</a>
+  <p class="hint spaced">Also kept in <code>deploy/config/exports/</code> (ignored by git; the last 5 are kept).
+    The file is encrypted — safe in a password manager — but delete it from your Downloads once it is sent.</p>
+</div>
+{% endif %}

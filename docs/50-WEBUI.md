@@ -7,7 +7,7 @@ deploying or rolling back a tag, putting a config change live — happens in **O
 ## Start it
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0   # once per machine
 deployctl webui               # → http://127.0.0.1:8765
 ```
 
@@ -29,7 +29,11 @@ A panel is already serving that port. That is easy to end up with: if it was sta
 terminal you have since closed, or backgrounded, nothing obvious owns it, and the browser
 keeps working while `webui` refuses to start.
 
-`deployctl webui` names the culprit rather than leaving you with the bare bind error:
+`deployctl webui` names the culprit rather than leaving you with the bare bind error — and,
+when that panel belongs to **another project**, says so and suggests another port instead of
+"open it": opening it would hand you that other project's buttons. (Each running panel is
+recorded in `~/.deployctl/panels/<port>.json`; `webui` also prints which project it serves
+when it starts, and every browser tab is titled `deployctl · <project> · <env>`.)
 
 ```
 [ERROR] port 8765 is already in use
@@ -96,6 +100,13 @@ which can send it requests. So:
   Submitting one blank keeps the stored value; only a non-empty value replaces it.
   *Preview resolved config* masks credentials by key name **and** by value, so the
   passwords embedded in `DATABASE_URL` and the Redis URLs are scrubbed too.
+- **Import and export keep secrets out of URLs and argv.** Export makes the passphrase on the
+  server and shows it once; import sends the file and its passphrase in the body of a POST,
+  twice (preview, then apply), so the server keeps neither between the steps. Both run
+  `deployctl config export|import` with the passphrase in that one child's environment —
+  never as an argument, which any process on the machine can read. An upload is staged
+  owner-only in the git-ignored `config/imports/` and removed once read; the download route
+  serves only a name `config export` writes, only from `config/exports/`.
 - **An unknown environment name is a 404**, never a silent fallback to another one —
   quietly showing staging when the URL said production is how the wrong thing gets deployed.
 - **No interactive API docs.** `/docs` and `/openapi.json` are disabled: they would be a
@@ -147,7 +158,24 @@ and names the one next step with a button to the tab it is done in. The page ope
   over ssh: for when GitHub or CI is what is broken. Same engine, lock, health gate and
   revert; outside CI's history of runs.
 
+### A new machine — the start page
+
+A project with no configuration on this machine — a teammate's fresh clone — opens on a
+start page with the **Import** dialog already open: the file someone exported, its
+passphrase, then **Preview** (project, who exported it and when, every file it would write,
+the keys that differ — names, never values) and **Import**. Seconds later the page reloads
+into the full panel. Closing the dialog shows the other way in: `deployctl init`, for a
+project that has no configuration anywhere yet.
+
 ### Setup — once per server
+
+**Your access on this machine** heads the tab: what no shared configuration can give you,
+each with what to do — your registry login (set in Configure, saved to `config/local.env`),
+your ssh key on each server (*the server refused this machine's key* shows your public key and
+the one command whoever runs the project uses to add it; *no answer* is a network problem),
+and your GitHub access (logged in, and your role: Write deploys and rolls back, Admin also
+syncs config and switches automatic deploys). On Operate the same card appears only when
+something is missing.
 
 1. **Prepare the server** — the root script for this environment
    (`deployctl server bootstrap-script`), how to run it on each host, and the check
@@ -176,7 +204,15 @@ environment that is already deployed is a migration rather than a toggle — see
 `webui/fields/*.toml` plus your `project/fields.toml`, filtered by mode. Save writes
 straight to the config files and nothing else — **Apply it →** takes you to *Apply a config
 change*. The image tag is not here: CI deploys the tag it built, and Operate deploys the
-one you pick.
+one you pick. *Your registry access* is the one section that is yours alone: it saves to
+`config/local.env`, never exported or uploaded.
+
+**Share or back up this configuration** (top of Configure) — **Export** writes every
+environment's settings and secrets as one encrypted file into `config/exports/` and offers it
+as a download, with a passphrase shown once: for a teammate, a new laptop, or a copy kept off
+this machine. Nobody's registry login, ssh keys or GitHub login are in it. **Import…** opens
+the same dialog as the start page; replacing a configuration that differs needs an explicit
+*Replace my configuration*, and the current files are snapshotted first.
 
 **Logs** — one button per host; streams `docker compose logs -f`.
 
@@ -219,7 +255,7 @@ disagree, the CLI is the truth — and that is a bug worth reporting.
 **"no environments configured"** — run `deployctl init --mode single|cluster` first.
 
 **Dependencies missing** — they are part of the installed tool; reinstall it:
-`uv tool install --force git+ssh://git@github.com/hybridinteract/deployctl@<tag>`.
+`uv tool install --force git+https://github.com/hybridinteract/deployctl@<tag>`.
 
 **The output pane says "connection lost — the command is still running"** — only the view
 was lost. Click the job in the bar under the pane's header to re-attach. A job started by a

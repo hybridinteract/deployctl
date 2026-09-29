@@ -45,8 +45,12 @@ def require() -> None:
 
 
 def repo() -> dict:
-    """``{"name": "owner/repo", "owner": ..., "private": bool, "default_branch": ...}``."""
-    out = _ok(gh(["repo", "view", "--json", "nameWithOwner,owner,visibility,defaultBranchRef"]),
+    """``{"name": "owner/repo", "owner", "private", "default_branch", "permission"}``.
+
+    ``permission`` is the logged-in user's role on it — ADMIN, MAINTAIN, WRITE,
+    TRIAGE or READ: what decides which CI/CD actions they can take.
+    """
+    out = _ok(gh(["repo", "view", "--json", "nameWithOwner,owner,visibility,defaultBranchRef,viewerPermission"]),
               "reading the repository")
     data = json.loads(out)
     return {
@@ -54,7 +58,15 @@ def repo() -> dict:
         "owner": data["owner"]["login"],
         "private": data["visibility"] != "PUBLIC",
         "default_branch": (data.get("defaultBranchRef") or {}).get("name", ""),
+        "permission": data.get("viewerPermission") or "",
     }
+
+
+#: What each role may do here: WRITE runs deploys and rollbacks; changing secrets
+#: and variables (sync-config, setup-key, pin-hosts, auto-deploy) needs ADMIN —
+#: GitHub requires it for an organisation repository's secrets.
+CAN_DEPLOY = frozenset({"ADMIN", "MAINTAIN", "WRITE"})
+CAN_MANAGE = frozenset({"ADMIN"})
 
 
 def plan(owner: str) -> str | None:

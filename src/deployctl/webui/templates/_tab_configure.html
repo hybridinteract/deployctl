@@ -6,6 +6,20 @@
 <section class="pane{% if landing == 'configure' %} active{% endif %}" id="pane-configure" role="tabpanel" aria-labelledby="tab-configure">
   <div id="problems">{% include "_problems.html" %}</div>
 
+  <section class="group" id="share">
+    <header class="group-head">
+      <h2>Share or back up this configuration</h2>
+      <p>Every environment's settings and secrets as one encrypted file: for a teammate joining the
+        project, a new laptop, or a copy kept off this machine. Never included: anyone's registry login,
+        ssh keys or GitHub login — each person sets up their own.</p>
+    </header>
+    <div class="start-actions">
+      <button type="button" class="btn" data-act="export">Export</button>
+      <button type="button" class="btn ghost" data-act="guide" data-guide="importDialog">Import…</button>
+    </div>
+    <div id="exportResult" aria-live="polite"></div>
+  </section>
+
   <form id="cfgForm">
     {% for sec in sections %}
     <details class="card" id="sec-{{ sec.id }}" {% if loop.index <= 3 %}open{% endif %}>

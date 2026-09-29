@@ -280,7 +280,10 @@ def parse_state(text: str) -> dict:
     for line in text.splitlines():
         parts = line.split("\t")
         if parts[0] == "HOST" and len(parts) == 4:
+            # access: reachable | denied (this machine's ssh key is not accepted) |
+            # unreachable (no answer) — see host_access in scripts/common/remote.sh.
             hosts[parts[1]] = {"host": parts[1], "role": parts[2], "reachable": parts[3] == "reachable",
+                               "access": parts[3],
                                "tag": "", "deployed_at": "", "deployed_by": "", "services": []}
         elif parts[0] == "STATE" and len(parts) == 3 and parts[1] in hosts and "=" in parts[2]:
             key, value = parts[2].split("=", 1)

@@ -26,7 +26,10 @@ def init(
 
     # Paths as seen from the repository root, where these commands are typed.
     def shown(path):
-        return path.relative_to(paths.REPO_ROOT)
+        try:
+            return path.relative_to(paths.REPO_ROOT)
+        except ValueError:
+            return path
 
     written = scaffold.scaffold(env, mode)
     if written:

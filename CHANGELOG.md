@@ -1,7 +1,74 @@
 # Changelog
 
 Versions are git tags (`vX.Y.Z`); projects install one with
-`uv tool install git+ssh://git@github.com/hybridinteract/deployctl@vX.Y.Z`.
+`uv tool install git+https://github.com/hybridinteract/deployctl@vX.Y.Z`.
+
+## 0.13.0
+
+A second person can deploy the same project: its configuration travels as one encrypted
+file, and everyone's own access stays their own.
+
+**Share the configuration**
+- `deployctl config export` writes every environment's shared files — settings and secrets,
+  everything the project needs to run — to one file, encrypted with a passphrase (AES-256-GCM,
+  scrypt; a changed byte or a wrong passphrase opens nothing). It lands in `config/exports/`,
+  owner-only and ignored by git through its own `.gitignore`; the last 5 are kept.
+  `--generate-passphrase` makes a strong one and prints it once.
+- `deployctl config import` loads one — the file given, or the one waiting in
+  `config/imports/`. It refuses a file made for another repository, and a configuration that
+  differs from the one here (naming the differing keys, never values) unless `--force`;
+  `--preview` shows the plan and writes nothing.
+- `deployctl config` is now a group: `config show` (plain `deployctl config` still works),
+  `config export`, `config import`.
+- Every panel Save, `config import --force` and `migrate-config --apply` first copies
+  `config/` into `~/.deployctl/config-backups/<project>/` (the last 20).
+
+**Each person's access is their own**
+- The registry login (`REGISTRY_USER`/`REGISTRY_TOKEN`) moves to **`config/local.env`**:
+  this machine's, loaded over the shared files, never exported, never uploaded to GitHub, and
+  never listed as an environment. It holds only those keys; anything else there is ignored
+  and `validate` says so. A login still in a shared file is a `validate` and `ci doctor`
+  warning, and `ci sync-config` refuses to upload it.
+- **CI logs the hosts in with its own short-lived `GITHUB_TOKEN`** (the deploy workflow
+  grants `packages: read`), not with anyone's token. **Every host is logged out of the
+  registry once its images are pulled** — no credential outlives a deploy, CI's or a
+  laptop's.
+- `deploy status --json` says why a host cannot be reached: `denied` (this machine's ssh key
+  is not on it) or `unreachable`.
+- `ci doctor` shows your role on the repository; a secrets list GitHub refuses to a
+  non-admin is a warning, not a failure; "not logged in" and "no access to this repository"
+  are told apart; and it checks that `ci.yml`'s deploy job grants `packages: read`.
+
+**Panel**
+- A project with no configuration on this machine opens on a **start page with the Import
+  dialog open**: file and passphrase, a preview, then the full panel seconds later.
+- Configure → **Share or back up this configuration**: Export (a download, with the
+  passphrase shown once) and Import.
+- **Your access on this machine** (Setup, and Operate when something is missing): your
+  registry login, your ssh key on each server — with your public key and the command to add
+  it when the server refuses it — and your GitHub role.
+- It says which project it serves: `deployctl webui` prints it, tabs are titled
+  `deployctl · <project> · <env>`, and a busy port held by **another project's** panel is
+  named as such instead of "open it" (`~/.deployctl/panels/<port>.json`).
+- `deployctl webui` starts in a clone with no configuration instead of refusing.
+
+**Also**
+- The generated workflows and this repository's own run on `ubuntu-24.04`, not
+  `ubuntu-latest` (which GitHub moves to Ubuntu 26 on 2026-10-19).
+- Install commands use `git+https://` — the repository is public.
+- New dependency: `cryptography`.
+
+**Upgrading a project**
+
+```bash
+uv tool install --force git+https://github.com/hybridinteract/deployctl@v0.13.0
+deployctl migrate-config --apply            # your registry login → config/local.env
+deployctl ci init --env production --force  # CI's own registry login, ubuntu-24.04
+deployctl ci doctor --env production        # prints the lines ci.yml's deploy job needs
+deployctl ci sync-config --env production   # the config without anyone's token
+```
+
+Then commit the workflows and `ci.yml`, and merge. Until then CI deploys as before.
 
 ## 0.12.0
 

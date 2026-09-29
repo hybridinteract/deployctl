@@ -48,6 +48,8 @@ def project(tmp_path, monkeypatch) -> pathlib.Path:
         "PROJECT_NGINX_EXTRA": tmp_path / "project" / "nginx.extra.conf",
     }.items():
         monkeypatch.setattr(paths, name, value)
+    # ~/.deployctl (config snapshots, running panels) — never the real one.
+    monkeypatch.setenv("DEPLOYCTL_HOME", str(tmp_path / "home"))
 
     return tmp_path
 

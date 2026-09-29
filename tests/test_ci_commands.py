@@ -43,7 +43,7 @@ def repo(project, write_config, monkeypatch):
     monkeypatch.setattr(paths, "REPO_ROOT", project)
     monkeypatch.setattr(github, "require", lambda: None)
     monkeypatch.setattr(github, "repo", lambda: {"name": "acme/demo", "owner": "acme", "private": True,
-                                                 "default_branch": "main"})
+                                                 "default_branch": "main", "permission": "ADMIN"})
     return project
 
 
@@ -62,7 +62,7 @@ def _cli(*args):
 ])
 def test_connect_records_where_secrets_can_live(repo, monkeypatch, private, plan, scope):
     monkeypatch.setattr(github, "repo", lambda: {"name": "acme/demo", "owner": "acme", "private": private,
-                                                 "default_branch": "main"})
+                                                 "default_branch": "main", "permission": "ADMIN"})
     monkeypatch.setattr(github, "plan", lambda owner: plan)
     result = _cli("connect", "--env", "production", "--branch", "prod")
     assert result.exit_code == 0, result.output
@@ -403,3 +403,98 @@ def test_a_fleet_behind_a_load_balancer_gets_its_own_firewall_advice(repo, write
 
 def test_a_nonsense_swap_size_is_refused(repo):
     assert CliRunner().invoke(app, ["server", "bootstrap-script", "--env", "production", "--swap", "lots"]).exit_code == 2
+
+
+# ---- CI's own registry login (0.13) ------------------------------------------------------
+#
+# The hosts pull with the run's short-lived GITHUB_TOKEN, never a person's token: the
+# deploy workflow and the job that calls it must both grant packages: read.
+
+
+def test_ci_logs_the_hosts_in_with_its_own_token(repo):
+    _cli("init", "--env", "production")
+    deploy = yaml.safe_load(_workflow(repo, "deploy.yml"))
+    assert deploy["permissions"] == {"contents": "read", "packages": "read"}
+    step = next(s for s in deploy["jobs"]["deploy"]["steps"] if s.get("name") == "Deploy")
+    assert step["env"]["REGISTRY_USER"] == "${{ github.actor }}"
+    assert step["env"]["REGISTRY_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
+
+
+def test_the_generated_pipeline_lets_the_deploy_pull(repo):
+    _cli("init", "--env", "production")
+    pipeline = yaml.safe_load(_workflow(repo, "ci.yml"))
+    assert pipeline["jobs"]["deploy"]["permissions"] == {"contents": "read", "packages": "read"}
+    assert ci.deploy_job_can_pull(_workflow(repo, "ci.yml"))
+
+
+def test_every_job_runs_on_a_pinned_ubuntu(repo):
+    """ubuntu-latest moves when GitHub decides; the job holding the ssh key should not."""
+    _cli("init", "--env", "production")
+    for name in ("build-image.yml", "deploy.yml", "ci.yml"):
+        for job_name, job in yaml.safe_load(_workflow(repo, name))["jobs"].items():
+            if "runs-on" in job:
+                assert job["runs-on"] == "ubuntu-24.04", f"{name}: {job_name}"
+
+
+def _doctor_items(monkeypatch, *, secrets=None, permission="ADMIN"):
+    monkeypatch.setattr(github, "repo", lambda: {"name": "acme/demo", "owner": "acme", "private": True,
+                                                 "default_branch": "main", "permission": permission})
+    if secrets is None:
+        monkeypatch.setattr(github, "secret_names", lambda scope: {"DEPLOY_SSH_KEY", "DEPLOYCTL_CONFIG"})
+    else:
+        monkeypatch.setattr(github, "secret_names", secrets)
+    monkeypatch.setattr(github, "variables", lambda scope: {})
+    monkeypatch.setattr(github, "gh", lambda args, stdin=None: subprocess.CompletedProcess(args, 0, "PUBLIC\n", ""))
+    doc = json.loads(_cli("doctor", "--env", "production", "--json").stdout)
+    return {item["id"]: item for item in doc["items"]}
+
+
+def test_doctor_asks_for_the_permission_a_project_owned_ci_yml_lacks(repo, monkeypatch):
+    _cli("init", "--env", "production")
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(path.read_text().replace("      packages: read\n    uses: ./.github/workflows/deploy.yml",
+                                             "    uses: ./.github/workflows/deploy.yml"))
+    item = _doctor_items(monkeypatch)["workflow:ci-packages"]
+    assert item["status"] == "todo" and "packages: read" in item["fix"]
+
+
+def test_doctor_names_the_callers_role(repo, monkeypatch):
+    assert "you: write" in _doctor_items(monkeypatch, permission="WRITE")["github"]["detail"]
+
+
+def test_a_teammate_who_cannot_see_secrets_gets_a_warning_not_a_failure(repo, monkeypatch):
+    def refused(scope):
+        raise github.GitHubError("HTTP 403: Resource not accessible")
+
+    item = _doctor_items(monkeypatch, secrets=refused, permission="WRITE")["secrets"]
+    assert item["status"] == "warn" and "cannot see them" in item["detail"]
+
+
+def test_an_admin_whose_secrets_cannot_be_read_still_fails(repo, monkeypatch):
+    def refused(scope):
+        raise github.GitHubError("HTTP 404: no such environment")
+
+    assert _doctor_items(monkeypatch, secrets=refused)["secrets"]["status"] == "fail"
+
+
+def test_doctor_flags_a_personal_login_in_the_shared_config(repo, monkeypatch):
+    paths.COMMON_CONFIG.write_text("REGISTRY_USER=acme\nREGISTRY_TOKEN=ghp_personal\n")
+    item = _doctor_items(monkeypatch)["personal-keys"]
+    assert item["status"] == "warn" and "migrate-config" in item["fix"]
+
+
+def test_doctor_tells_logged_out_from_no_access(repo, monkeypatch):
+    """A teammate not yet added to a private repository is told to ask for access, not to log in."""
+    def not_found():
+        raise github.GitHubError("reading the repository: GraphQL: Could not resolve to a Repository")
+
+    monkeypatch.setattr(github, "repo", not_found)
+    item = json.loads(_cli("doctor", "--env", "production", "--json").stdout)["items"][0]
+    assert item["value"] == "no-access" and "add you" in item["fix"]
+
+    def logged_out():
+        raise github.GitHubError("gh is not logged in")
+
+    monkeypatch.setattr(github, "require", logged_out)
+    item = json.loads(_cli("doctor", "--env", "production", "--json").stdout)["items"][0]
+    assert item["value"] == "logged-out" and item["fix"] == "gh auth login"

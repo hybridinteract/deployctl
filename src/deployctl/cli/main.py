@@ -73,7 +73,7 @@ def _global_options(
 app.command("init")(init_cmd.init)
 app.command("setup")(setup_cmd.setup)
 app.command("validate")(validate_cmd.validate)
-app.command("config")(show_cmd.config)
+app.add_typer(show_cmd.config_app)
 app.command("envs")(show_cmd.envs)
 app.command("selftest")(selftest_cmd.selftest)
 app.command("webui")(webui_cmd.webui)

@@ -125,8 +125,11 @@ def _kill_if_still_there(group: int, grace: float = 1.0) -> None:
     signal_group(group, signal.SIGKILL)
 
 
-def run_json(argv: list[str], timeout: int = 60) -> tuple[object | None, str]:
+def run_json(argv: list[str], timeout: int = 60, extra_env: dict[str, str] | None = None) -> tuple[object | None, str]:
     """``(parsed stdout, "")`` for a ``--json`` command, or ``(None, why not)``. Never raises.
+
+    ``extra_env`` reaches that one child only — how a passphrase is handed over:
+    never in argv, which any process on the machine can read.
 
     stdout only: the JSON commands print their document there and nothing else,
     while warnings go to stderr — mixing the two, as run_capture does, would make
@@ -137,7 +140,7 @@ def run_json(argv: list[str], timeout: int = 60) -> tuple[object | None, str]:
         proc = subprocess.run(
             [*_DEPLOYCTL, *argv],
             cwd=str(paths.workdir()),
-            env=_child_env(),
+            env={**_child_env(), **(extra_env or {})},
             capture_output=True,
             text=True,
             timeout=timeout,

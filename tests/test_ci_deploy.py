@@ -220,6 +220,23 @@ def _writes(calls):
 
 
 class TestSyncConfig:
+    @pytest.fixture(autouse=True)
+    def login_is_personal(self, config):
+        """Since 0.13 the registry login is each person's own, in config/local.env."""
+        paths.local_config().write_text(COMMON)
+        paths.COMMON_CONFIG.write_text("")
+
+    def test_a_personal_registry_login_is_never_uploaded(self, config, gh):
+        calls, _ = gh
+        paths.COMMON_CONFIG.write_text(COMMON)
+        result = _sync()
+        assert result.exit_code == 1
+        assert "one person's registry login" in result.output and "migrate-config" in result.output
+        assert _writes(calls) == [], "nothing may reach GitHub"
+
+    def test_local_env_is_never_part_of_the_bundle(self, config):
+        assert "local.env" not in bundle.collect("production")
+
     def test_uploads_the_bundle_then_its_digest_to_the_environment(self, config, gh):
         calls, _ = gh
         files = bundle.collect("production")

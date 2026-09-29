@@ -14,7 +14,8 @@ dependencies = [
     "jinja2>=3.1",              # templates/ → generated/
     "fastapi>=0.110",           # the control panel
     "uvicorn[standard]>=0.29",
-    "python-multipart>=0.0.9",  # form posts from the Configure tab
+    "python-multipart>=0.0.9",  # form posts and uploads in the panel
+    "cryptography>=43",         # config export/import: AES-256-GCM, scrypt
 ]
 
 [project.scripts]

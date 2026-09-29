@@ -276,6 +276,7 @@ doctor() {
                 image_ok=0
             fi
         done
+        registry_logout "$h"
         [[ $image_ok -eq 1 ]] || { fail=$((fail + 1)); continue; }
 
         # Containers with our name prefix but a foreign compose project are
@@ -339,7 +340,10 @@ stage_release() {
     push_artifacts "$host" "$role" || return 1
     ensure_registry_login "$host" || return 1
     ensure_bootstrap_cert "$host" || return 1
-    compose_on "$host" "$role" "pull --quiet" || compose_on "$host" "$role" "pull" || return 1
+    local pulled=0
+    compose_on "$host" "$role" "pull --quiet" || compose_on "$host" "$role" "pull" || pulled=1
+    registry_logout "$host"
+    return "$pulled"
 }
 
 # Where a release can fail live: the containers change, then the api must answer
@@ -450,6 +454,7 @@ cmd_init() {
         ensure_registry_login "$h"
         ensure_bootstrap_cert "$h"
         compose_on "$h" "$role" "pull --quiet" || compose_on "$h" "$role" "pull"
+        registry_logout "$h"
     done
 
     # Schema first, then the primary, then the rest.
@@ -509,6 +514,7 @@ cmd_update() {
         push_artifacts "$PRIMARY_HOST" primary
         ensure_registry_login "$PRIMARY_HOST"
         compose_on "$PRIMARY_HOST" primary "pull --quiet" || compose_on "$PRIMARY_HOST" primary "pull"
+        registry_logout "$PRIMARY_HOST"
         if ! migrate_primary; then
             # No container has changed yet; put the files back so the host's
             # compose file still describes what is running.
@@ -548,6 +554,7 @@ cmd_migrate() {
     push_artifacts "$PRIMARY_HOST" primary
     ensure_registry_login "$PRIMARY_HOST"
     compose_on "$PRIMARY_HOST" primary "pull --quiet" || compose_on "$PRIMARY_HOST" primary "pull"
+    registry_logout "$PRIMARY_HOST"
     migrate_primary
 }
 
@@ -735,11 +742,12 @@ cmd_history() {
 #   STATE <addr> <KEY=value>              — the host's .deployctl-state
 #   SVC   <addr> <container report line>  — see container_report
 cmd_state() {
-    local h role line
+    local h role line access
     for h in $(ordered_hosts); do
         role="$(host_role "$h")"
-        if ! remote "$h" true 2>/dev/null; then
-            printf 'HOST\t%s\t%s\tunreachable\n' "$h" "$role"
+        access="$(host_access "$h")"
+        if [[ "$access" != reachable ]]; then
+            printf 'HOST\t%s\t%s\t%s\n' "$h" "$role" "$access"
             continue
         fi
         printf 'HOST\t%s\t%s\treachable\n' "$h" "$role"

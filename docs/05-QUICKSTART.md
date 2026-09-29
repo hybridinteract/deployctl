@@ -14,12 +14,22 @@ optional and nothing here is ambiguous — run the blocks in order, top to botto
 > 2. **A container image in a registry.** → Don't have one? Step 4 creates the CI workflow
 >    that builds it.
 
+> **Joining a project someone already deploys?** Skip the rest of this page:
+>
+> 1. Install the tool (Step 1 below) and clone the application's repository.
+> 2. Ask whoever runs the project for an export (panel: Configure → *Share or back up* →
+>    **Export**) and its passphrase, sent separately.
+> 3. `deployctl webui` inside the clone — it opens on **Import**. Pick the file, type the
+>    passphrase, check the preview, import.
+> 4. Work through **Your access on this machine** (Setup tab): your own registry login, your
+>    ssh key on the servers (send them your public key), and `gh auth login`.
+
 ---
 
 ## Step 1 · Install the tool
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0
 deployctl --version
 ```
 
@@ -127,7 +137,7 @@ Deploy the change). Deploying from this machine is still there, folded under
 Every button above is a command. Use these for scripting, CI, or an audit trail:
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0   # once per machine
 deployctl init --mode single --env production
 $EDITOR deploy/config/common.env               # project name, domain, image repo
 $EDITOR deploy/config/production.env           # hosts, database, TLS
@@ -158,7 +168,7 @@ run, without touching a host.
 
 | Symptom | Do this |
 |---|---|
-| `deployctl: command not found` | Step 1 — `uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0`, and make sure uv's tool directory is on your PATH (`uv tool update-shell`). |
+| `deployctl: command not found` | Step 1 — `uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0`, and make sure uv's tool directory is on your PATH (`uv tool update-shell`). |
 | Commands act on the wrong project | They use the nearest `deploy/` above the current directory. Check with `deployctl envs`, or pass `--project-dir`. |
 | `no environments configured` | Step 2 has not been run. |
 | Panel says `port 8765 is already in use` | `deployctl webui --restart` |

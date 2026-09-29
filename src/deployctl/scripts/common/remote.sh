@@ -59,6 +59,24 @@ remote() {
     ssh $SSH_OPTS "${SSH_USER}@${host}" "$@"
 }
 
+# Can this machine reach a host as SSH_USER — and if not, why? Prints one word:
+#   reachable    logged in
+#   denied       the host answered but refused this machine's key: the key is
+#                not in the deploy user's authorized_keys (a new teammate)
+#   unreachable  no answer: address, firewall, or the host is down
+# BatchMode: a probe must fail, never stop at a password prompt.
+host_access() {
+    local host="$1" out
+    # shellcheck disable=SC2086  # SSH_OPTS word-splits into flags
+    if out="$(ssh $SSH_OPTS -o BatchMode=yes "${SSH_USER}@${host}" true 2>&1)"; then
+        echo reachable
+    elif [[ "$out" == *"Permission denied"* || "$out" == *"Too many authentication failures"* ]]; then
+        echo denied
+    else
+        echo unreachable
+    fi
+}
+
 remote_maybe() {
     local host="$1"; shift
     if [[ "${DEPLOYCTL_DRY_RUN:-}" == "1" ]]; then
@@ -230,6 +248,20 @@ ensure_registry_login() {
         return 1
     fi
     print_success "[$host] registry login ok"
+}
+
+# Log the host's docker out again once its images are pulled, so no registry
+# credential outlives the run — not a person's token from a laptop deploy, not
+# CI's short-lived one. Only when this run logged in: a host someone logged in by
+# hand, with no credentials in the config, is left as it was.
+registry_logout() {
+    local host="$1"
+    [[ -n "${REGISTRY_TOKEN:-}" && -n "${REGISTRY_USER:-}" && -n "${REGISTRY_HOST:-}" ]] || return 0
+    if [[ "${DEPLOYCTL_DRY_RUN:-}" == "1" ]]; then
+        echo "  [dry-run] docker logout ${REGISTRY_HOST} on ${host}"
+        return 0
+    fi
+    remote "$host" "docker logout '${REGISTRY_HOST}'" >/dev/null 2>&1 || true
 }
 
 # Let's Encrypt bootstrap: nginx's 443 block references certificate files, so on

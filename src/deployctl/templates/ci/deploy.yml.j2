@@ -45,13 +45,16 @@ on:
         type: boolean
         default: false
 
+# packages: read — the hosts pull the image with this run's own token (below),
+# never with a person's: nobody's registry login is stored in GitHub or left on a host.
 permissions:
   contents: read
+  packages: read
 
 jobs:
   deploy:
     name: ${{ inputs.action }} ${{ inputs.tag }} → ${{ inputs.environment }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Each host takes a few minutes (pull, restart, health gate, service watch);
     # sized for «HOST_COUNT» host(s). `deployctl ci init --force` recomputes it.
     timeout-minutes: «TIMEOUT_MINUTES»
@@ -145,6 +148,10 @@ jobs:
           DEPLOYCTL_SSH_STRICT: "1"     # only the pinned host keys, never trust-on-first-use
           DEPLOYCTL_CONFIG_STRICT: "1"  # a value the servers run with changes only on purpose
           DEPLOYCTL_NO_MINT: "1"        # a secret missing from the bundle fails, never regenerates
+          # The hosts log in to the registry with this run's token: short-lived,
+          # read-only, and logged out again once the image is pulled.
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [[ "$DEPLOY_ALLOW_CONFIG_CHANGE" == "true" ]]; then
             export DEPLOYCTL_ALLOW_SECRET_CHANGE=1

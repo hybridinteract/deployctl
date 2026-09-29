@@ -31,7 +31,7 @@ import typer
 
 from ... import __version__
 from .. import bundle, github, paths, secrets, tags, ui
-from ..config import Config
+from ..config import PERSONAL_KEYS, Config
 from ..context import env_option, load_config, resolve_env
 from ..envfile import parse_env_text, patch_env_file, read_env_file
 from ..runner import run
@@ -455,6 +455,14 @@ def sync_config(
         ui.error(f"config/secrets.{env_name}.env has no {', '.join(unminted)}")
         ui.hint(f"run `deployctl setup --env {env_name}` first — CI never generates secrets")
         raise typer.Exit(1)
+    # One person's registry login must never become CI's: CI logs in with the run's
+    # own token, and a personal token uploaded here would outlive that person's access.
+    personal = sorted({key for path in bundle.members(env_name) for key, value in read_env_file(path).items()
+                       if key in PERSONAL_KEYS and value})
+    if personal:
+        ui.error(f"{', '.join(personal)} is in the shared config — that is one person's registry login")
+        ui.hint("move it to config/local.env first (never uploaded): deployctl migrate-config --apply")
+        raise typer.Exit(1)
 
     files = _collect(env_name)
     local = bundle.digest(files)
@@ -579,11 +587,21 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
     env = cfg.env
     try:
         github.require()
+    except github.GitHubError as exc:
+        _check(items, "github", "fail", "GitHub CLI", str(exc), "gh auth login", value="logged-out")
+        return items
+    try:
         info = github.repo()
     except github.GitHubError as exc:
-        _check(items, "github", "fail", "GitHub CLI", str(exc), "gh auth login")
+        # Logged in, and still refused: GitHub answers "not found" for a private
+        # repository you have not been given access to — a new teammate's case.
+        _check(items, "github", "fail", "GitHub", str(exc),
+               "ask an admin of the repository to add you (Settings → Collaborators), then check again",
+               value="no-access")
         return items
-    _check(items, "github", "ok", "GitHub", f"{info['name']} ({'private' if info['private'] else 'public'})")
+    role = info["permission"].lower() or "unknown role"
+    _check(items, "github", "ok", "GitHub", f"{info['name']} ({'private' if info['private'] else 'public'}) · you: {role}",
+           value=info["permission"])
 
     if cfg.raw["CI_SCOPE"]:
         _check(items, "scope", "ok", "Where secrets live", cfg.raw["CI_SCOPE"])
@@ -613,13 +631,34 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
     else:
         _check(items, "workflow:ci", "todo", f".github/workflows/{OWNED}",
                "missing" if not ci_text else "never calls deploy.yml", f"deployctl ci init --env {env}")
+    if "deploy.yml" in ci_text and not deploy_job_can_pull(ci_text):
+        # ci.yml is the project's own file, so this is said, never rewritten: a called
+        # workflow gets no more permission than the job calling it grants.
+        _check(items, "workflow:ci-packages", "todo", f"{OWNED}: the deploy job may pull images",
+               "the deploy job does not grant packages: read — CI's own token cannot pull the image",
+               "add under the `deploy:` job in .github/workflows/ci.yml:  "
+               "permissions: { contents: read, packages: read }")
+
+    personal = sorted({key for path in bundle.members(env) for key, value in read_env_file(path).items()
+                       if key in PERSONAL_KEYS and value})
+    if personal:
+        _check(items, "personal-keys", "warn", "Your registry login is personal",
+               f"{', '.join(personal)} is in the shared config — exported and uploaded to CI",
+               "deployctl migrate-config --apply   (moves it to config/local.env)")
 
     try:
         names = github.secret_names(scope)
         values = github.variables(scope)
     except github.GitHubError as exc:
-        _check(items, "secrets", "fail", f"Secrets on {_where(cfg, scope)}", str(exc),
-               f"deployctl ci connect --env {env}")
+        if info["permission"] not in github.CAN_MANAGE:
+            # Not missing — out of sight: GitHub shows an organisation repository's
+            # secrets to admins only. Saying "fail" here would send a teammate
+            # chasing a problem that does not exist.
+            _check(items, "secrets", "warn", f"Secrets on {_where(cfg, scope)}",
+                   f"your role ({role}) cannot see them — an admin can check with: deployctl ci doctor")
+        else:
+            _check(items, "secrets", "fail", f"Secrets on {_where(cfg, scope)}", str(exc),
+                   f"deployctl ci connect --env {env}")
         return items
     repo_values = values if scope is None else _safe_variables(None)
 
@@ -668,6 +707,13 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
            f"on — every push to {cfg.raw['DEPLOY_BRANCH']} deploys" if auto == "true" else "off — deploy with `ci deploy`",
            value="on" if auto == "true" else "off")
     return items
+
+
+def deploy_job_can_pull(ci_text: str) -> bool:
+    """Whether ci.yml's `deploy:` job grants packages: read (a text check — no YAML parser)."""
+    match = re.search(r"^  deploy:\n((?:(?:    .*|\s*)\n)*)", ci_text + "\n", re.M)
+    # A line of its own, not a mention in a comment: "# … packages: read …" is prose.
+    return bool(match) and re.search(r"^\s+packages:\s*read\b", match.group(1), re.M) is not None
 
 
 def _safe_variables(scope: str | None) -> dict[str, str]:

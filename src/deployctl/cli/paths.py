@@ -155,6 +155,32 @@ def app_values_file(env: str) -> pathlib.Path:
     return CONFIG_DIR / f"app.{env}.env"
 
 
+def state_home() -> pathlib.Path:
+    """deployctl's own folder in the user's home: database-dump copies, config
+    snapshots, running panels. ``$DEPLOYCTL_HOME`` moves it (the tests do)."""
+    return pathlib.Path(os.environ.get("DEPLOYCTL_HOME") or "~/.deployctl").expanduser()
+
+
+def local_config() -> pathlib.Path:
+    """This machine's own values: the operator's registry login (``config/local.env``).
+
+    Beside the shared files, loaded over them, and never exported or uploaded — two
+    people deploying one project each keep their own credentials here, so the shared
+    config stays identical on every machine and in CI.
+    """
+    return CONFIG_DIR / "local.env"
+
+
+def exports_dir() -> pathlib.Path:
+    """Where ``deployctl config export`` writes, unless told otherwise."""
+    return CONFIG_DIR / "exports"
+
+
+def imports_dir() -> pathlib.Path:
+    """Where ``deployctl config import`` looks when given no file."""
+    return CONFIG_DIR / "imports"
+
+
 def profile_file(mode: str) -> pathlib.Path:
     """Path to a mode's default profile (``profiles/<mode>.env``)."""
     return PROFILES_DIR / f"{mode}.env"
@@ -163,16 +189,16 @@ def profile_file(mode: str) -> pathlib.Path:
 def known_environments() -> list[str]:
     """Environment names that have a config file.
 
-    ``common.env`` is shared, and ``secrets.<env>.env`` / ``app.<env>.env`` hold
-    values for an environment that is already listed via its own file — none of
-    them is an environment in its own right.
+    ``common.env`` is shared, ``local.env`` is this machine's, and
+    ``secrets.<env>.env`` / ``app.<env>.env`` hold values for an environment that is
+    already listed via its own file — none of them is an environment in its own right.
     """
     if not CONFIG_DIR.is_dir():
         return []
     return sorted(
         p.stem
         for p in CONFIG_DIR.glob("*.env")
-        if p.stem != "common" and not p.name.startswith(("secrets.", "app."))
+        if p.stem not in ("common", "local") and not p.name.startswith(("secrets.", "app."))
     )
 
 

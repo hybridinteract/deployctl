@@ -46,6 +46,11 @@ ENV_INTRODUCIBLE = frozenset({
     "GHCR_TOKEN",
 })
 
+#: One operator's own access, not the project's: kept in config/local.env, never
+#: exported, never uploaded to CI (which logs in with its own short-lived token).
+#: Each person who deploys sets their own; the shared config never holds them.
+PERSONAL_KEYS = frozenset({"REGISTRY_USER", "REGISTRY_TOKEN", "GHCR_USER", "GHCR_TOKEN"})
+
 #: Legacy names accepted as aliases: alias -> canonical.
 ALIASES = {
     "GHCR_USER": "REGISTRY_USER",
@@ -372,6 +377,24 @@ class Config:
                 "REGISTRY_TOKEN is set but REGISTRY_USER is empty",
                 "docker login needs both; the token alone cannot authenticate",
             )
+        # One person's access belongs to that person (PERSONAL_KEYS): in a shared file
+        # it is exported to everyone and uploaded to CI.
+        shared = {**read_env_file(paths.COMMON_CONFIG), **read_env_file(paths.config_file(self.env))}
+        misplaced = sorted(key for key in PERSONAL_KEYS if shared.get(key))
+        if misplaced:
+            warn(
+                f"{', '.join(misplaced)} is in the shared config — that is one person's registry login",
+                "it is exported to anyone given the config and uploaded to CI; move it to config/local.env: "
+                "deployctl migrate-config --apply",
+            )
+        ignored = sorted(key for key in read_env_file(paths.local_config()) if key not in PERSONAL_KEYS)
+        if ignored:
+            warn(
+                f"config/local.env: {', '.join(ignored)} ignored",
+                "local.env holds only your registry login (REGISTRY_USER, REGISTRY_TOKEN) — anything else "
+                "would make this machine deploy what CI does not; put shared values in config/common.env "
+                f"or config/{self.env}.env",
+            )
 
         if self.raw_input.get("IMAGE_TAG") and not os.environ.get("IMAGE_TAG"):
             warn(
@@ -583,6 +606,10 @@ def load(env: str) -> Config:
     _layer(merged, common, "config/common.env", sources)
     _layer(merged, env_values, f"config/{env}.env", sources)
     _layer(merged, read_env_file(paths.secrets_file(env)), f"config/secrets.{env}.env", sources)
+    # This machine's own access, over the shared files — and only that: any other key
+    # here would make one operator deploy something CI does not (validate says so).
+    local = {k: v for k, v in read_env_file(paths.local_config()).items() if k in PERSONAL_KEYS}
+    _layer(merged, local, "config/local.env", sources)
 
     # Aliases, before the environment layer so GHCR_TOKEN in the shell still works.
     for alias, canonical in ALIASES.items():

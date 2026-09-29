@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{#-
+  The start page: a project on this machine with no configuration yet — typically
+  a teammate's fresh clone. The import dialog opens straight away (panel.js reads
+  data-start on the page); closing it leaves the other way in, a new project.
+-#}
+{% from "_macros.html" import codeblock %}
+{% block body %}
+<header class="topbar">
+  <div class="brand">deployctl</div>
+  <div class="project">{{ project }} <span class="dim">{{ repository }}</span></div>
+</header>
+<main class="start" data-start="1">
+  <section class="group">
+    <header class="group-head">
+      <h2>No configuration on this machine yet</h2>
+      <p>This project's configuration — hosts, domain, database and app secrets — is not in git, by
+        design. Someone who deploys it can hand it to you as one encrypted file.</p>
+    </header>
+    <div class="start-actions">
+      <button type="button" class="btn" data-act="guide" data-guide="importDialog">Import a configuration</button>
+    </div>
+    <ul class="notes">
+      <li><b>Joining this project?</b> Ask whoever deploys it for an export (Configure → <i>Share or back up</i>),
+        and the passphrase that comes with it.</li>
+      <li><b>After importing,</b> three things stay yours to set up: your registry login, your ssh key on the
+        servers, and your GitHub login (<code>gh auth login</code>). The panel lists them.</li>
+      <li><b>Starting this project from scratch instead?</b> Create its configuration, then reload this page:</li>
+    </ul>
+    {{ codeblock('start-init', 'deployctl init --mode single     # or --mode cluster') }}
+  </section>
+</main>
+{% include "_import_dialog.html" %}
+<div class="toasts" id="toasts" aria-live="polite"></div>
+{% endblock %}

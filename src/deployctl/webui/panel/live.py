@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import pathlib
 import threading
 import time
 from typing import Any, Callable
@@ -100,6 +101,8 @@ def local_facts(cfg: Config) -> dict:
         "workflows": (paths.REPO_ROOT / ".github" / "workflows" / "deploy.yml").is_file(),
         "ci_scope": bool(cfg.raw.get("CI_SCOPE")),
         "branch": cfg.raw.get("DEPLOY_BRANCH") or "main",
+        "registry_login": bool(cfg.raw.get("REGISTRY_USER") and cfg.raw.get("REGISTRY_TOKEN")),
+        "ssh_user": cfg.raw.get("SSH_USER") or "deploy",
     }
 
 
@@ -125,8 +128,14 @@ def journey(local: dict, server: Fact | None, ci: Fact | None) -> dict:
     elif not (server and server.ok):
         stage["server"] = ("unknown", server.error if server else "not checked yet")
     else:
+        denied = [h["host"] for h in hosts if h.get("access") == "denied"]
         down = [h["host"] for h in hosts if not h.get("reachable")]
-        stage["server"] = ("fail", f"cannot reach {', '.join(down)}") if down else ("done", f"{len(hosts)} reachable")
+        if denied:
+            stage["server"] = ("fail", f"your ssh key is not on {', '.join(denied)}")
+        elif down:
+            stage["server"] = ("fail", f"cannot reach {', '.join(down)}")
+        else:
+            stage["server"] = ("done", f"{len(hosts)} reachable")
 
     if stage["server"][0] == "done":
         running = [h for h in hosts if h.get("tag")]
@@ -156,6 +165,10 @@ def _next(stage: dict[str, tuple[str, str]], local: dict) -> dict:
     status, detail = stage["server"]
     if status == "todo":
         return {"text": "Fill in the configuration, then prepare the server.", "tab": "setup"}
+    if status == "fail" and detail.startswith("your ssh key"):
+        # A server that answers and refuses this machine: someone joining a project,
+        # not a server to set up — the bootstrap script is the wrong advice here.
+        return {"text": "This machine's ssh key is not on the server yet — see Your access.", "tab": "setup"}
     if status == "fail":
         return {"text": f"Can't reach the server ({detail.removeprefix('cannot reach ')}). "
                         "A new one? Run the bootstrap script on it.", "tab": "setup"}
@@ -231,6 +244,72 @@ def ci_item(ci: Fact | None, key: str) -> dict | None:
     if not (ci and ci.ok):
         return None
     return next((item for item in ci.data.get("items", []) if item["id"] == key), None)
+
+
+# ---- your access on this machine ----------------------------------------------------
+
+#: The public keys ssh offers by default, most modern first.
+_PUBLIC_KEYS = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
+
+
+def public_key() -> str:
+    """This machine's public ssh key — what to send to whoever runs the project. Not a secret."""
+    for name in _PUBLIC_KEYS:
+        path = pathlib.Path.home() / ".ssh" / name
+        if path.is_file():
+            return path.read_text().strip()
+    return ""
+
+
+def access(local: dict, server: Fact | None, ci: Fact | None) -> dict:
+    """What this machine still needs that no shared config can give it.
+
+    ``{"rows": [...], "missing": bool}``; each row ``{id, status, title, detail}``
+    with status ok | todo | fail | unknown. The three are exactly what an import
+    leaves to the person: their registry login, their ssh key on the servers, and
+    their GitHub login.
+    """
+    rows = []
+    registry = local.get("registry_login")
+    rows.append({"id": "registry", "status": "ok" if registry else "todo", "title": "Your registry login",
+                 "detail": "set on this machine (config/local.env)" if registry
+                 else "not set on this machine — deploying from here and listing tags need it"})
+
+    if not (server and server.ok):
+        rows.append({"id": "ssh", "status": "unknown", "title": "Your ssh access to the servers",
+                     "detail": server.error if server else "not checked yet"})
+    else:
+        for host in server.data.get("hosts", []):
+            state = host.get("access") or ("reachable" if host.get("reachable") else "unreachable")
+            row = {"id": f"ssh:{host['host']}", "title": f"ssh {host['host']}"}
+            if state == "reachable":
+                row |= {"status": "ok", "detail": "this machine logs in"}
+            elif state == "denied":
+                row |= {"status": "fail", "detail": "the server refused this machine's key — it is not on it yet",
+                        "host": host["host"], "user": local.get("ssh_user", "deploy")}
+            else:
+                row |= {"status": "fail", "detail": "no answer — the address, a firewall, or the server is down"}
+            rows.append(row)
+
+    github_row = next((i for i in (ci.data.get("items", []) if ci and ci.ok else []) if i["id"] == "github"), None)
+    if github_row is None:
+        rows.append({"id": "github", "status": "unknown", "title": "Your GitHub access",
+                     "detail": ci.error if ci and not ci.ok else "not checked yet"})
+    elif github_row["status"] != "ok":
+        detail = ("not logged in — run: gh auth login" if github_row.get("value") == "logged-out"
+                  else "GitHub will not show you this repository — ask an admin to add you to it")
+        rows.append({"id": "github", "status": "todo", "title": "Your GitHub access", "detail": detail})
+    else:
+        role = github_row.get("value", "")
+        if role in ("ADMIN",):
+            detail, status = "admin — every CI/CD action", "ok"
+        elif role in ("MAINTAIN", "WRITE"):
+            detail, status = f"{role.lower()} — deploy and roll back; Sync config and automatic deploys need an admin", "ok"
+        else:
+            detail, status = f"{role.lower() or 'read'} — you can watch, not deploy: ask for Write on the repository", "todo"
+        rows.append({"id": "github", "status": status, "title": "Your GitHub access", "detail": detail})
+
+    return {"rows": rows, "missing": any(r["status"] in ("todo", "fail") for r in rows)}
 
 
 # ---- presentation helpers, shared by the fragments -----------------------------------

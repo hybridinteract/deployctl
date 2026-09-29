@@ -64,5 +64,7 @@
   </div>
 </div>
 
+{#- Page level, not inside a tab: a dialog in a hidden (display: none) tab never shows. -#}
+{% include "_import_dialog.html" %}
 <div class="toasts" id="toasts" aria-live="polite"></div>
 {% endblock %}

@@ -1,4 +1,4 @@
-"""``deployctl config`` — inspect the resolved configuration."""
+"""``deployctl config`` — inspect the resolved configuration; hand it on (export/import)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,25 @@ import typer
 
 from .. import paths, ui
 from ..context import env_option, load_config
+from . import transfer as transfer_cmd
+
+config_app = typer.Typer(
+    name="config",
+    help="Show this project's configuration, or hand it on: export to one encrypted file, import one.",
+    invoke_without_command=True,
+)
+
+
+@config_app.callback()
+def config_default(
+    ctx: typer.Context,
+    env: str = env_option(),
+    show_secrets: bool = typer.Option(False, "--show-secrets", help="Print secret values in full."),
+    key: str = typer.Option(None, "--key", "-k", help="Print one value and nothing else (script-friendly)."),
+) -> None:
+    """Plain `deployctl config` is `deployctl config show`, as it always was."""
+    if ctx.invoked_subcommand is None:
+        config(env=env, show_secrets=show_secrets, key=key)
 
 
 def config(
@@ -41,6 +60,11 @@ def config(
 
     print()
     ui.info(f"config files: {paths.CONFIG_DIR.relative_to(paths.ROOT)}/{{common,{cfg.env},secrets.{cfg.env}}}.env")
+
+
+config_app.command("show")(config)
+config_app.command("export")(transfer_cmd.export)
+config_app.command("import")(transfer_cmd.import_)
 
 
 def envs() -> None:
