@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{#-
+  The home panel: the projects on this machine. Each project's panel is its own
+  process on its own port; this page belongs to none of them.
+-#}
+{% from "_macros.html" import codeblock %}
+{% block body %}
+<header class="topbar">
+  <div class="brand">deployctl</div>
+  <div class="project">Projects on this machine</div>
+</header>
+<main class="start home">
+  <section class="group">
+    <header class="group-head">
+      <h2>Your projects</h2>
+      <p>Each opens in its own control panel, on a port of its own.</p>
+    </header>
+    {% if error %}<p class="hint err">{{ error }}</p>{% endif %}
+    {% if projects %}
+    <ul class="checklist project-list">
+      {% for p in projects %}
+      <li class="check">
+        <div class="check-body">
+          <b>{{ p.name }}</b>
+          <span class="dim">{{ p.root }}{% if p.environments %} · {{ p.environments|join(', ') }}{% endif %}</span>
+          {% if p.missing %}
+          <span class="hint err">Not found at this path any more.</span>
+          {% elif p.running %}
+          <a class="btn sm" href="{{ p.url }}">Open</a>
+          {% else %}
+          {{ codeblock('open-' ~ loop.index, 'deployctl --project-dir ' ~ p.deploy_dir ~ ' webui') }}
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="dim">No projects yet. In an application repository, run:</p>
+    {{ codeblock('first', 'deployctl webui') }}
+    {% endif %}
+  </section>
+</main>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+{% endblock %}

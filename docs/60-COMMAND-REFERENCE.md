@@ -456,15 +456,39 @@ database name, or takes `--yes`.
 
 ## The control panel
 
-### `deployctl webui [--port P] [--stop] [--restart] [--reload]`
-**Touches: local.** Serves the control panel on `127.0.0.1` — the host is not
-configurable. Refuses to start without at least one configured environment.
+### `deployctl webui [--port P] [--detach] [--no-browser] [--json] [--stop] [--restart] [--reload]`
+**Touches: local.** Opens this project's control panel on `127.0.0.1` — the host is not
+configurable — and puts the project on this machine's list if it is not there yet. Each
+project has a port of its own, given once and kept (see `projects list`); outside a project
+it opens the **home panel** on 8765: your projects, and Add project. Run in a repository
+that has no deployctl project yet, the home panel opens with Add project filled in for it.
 
-`--stop` ends a panel already serving that port; `--restart` replaces it; `--reload`
-auto-reloads while editing the panel's own code. If the port is busy, the command names the
-process holding it rather than leaving you with a bare bind error.
+A panel already running for this project is reused, never started twice — and `--port`
+is refused while it runs, since two panels on one project would each think they alone run
+its jobs. If the port is held by anything else, the command names what holds it.
+
+`--detach` starts the panel in the background (its log in `~/.deployctl/logs/`) and returns
+once it answers — how the switcher opens another project. The browser opens by itself on a
+desktop, never over ssh; `--no-browser` stops it. `--json` prints `{url, port, root}`.
+`--stop` ends this project's panel (only ever a deployctl panel), `--restart` replaces it,
+and `--reload` auto-reloads while editing the panel's own code.
 
 See [50-WEBUI.md](50-WEBUI.md) for the panel itself and its safety model.
+
+### `deployctl projects list [--json]`
+**Touches: local.** The projects on this machine (`~/.deployctl/projects.json`): name,
+panel port, whether that panel is running, and where the repository is.
+
+### `deployctl projects add [PATH] [--name N] [--port P] [--json]`
+**Touches: local.** Puts the project in the repository at `PATH` (default: here) on the
+list, or changes its name or port. It gets the next free port from 8766 unless `--port`
+gives one. A repository without a deployctl project is refused, saying what to do instead:
+start one (`init`), or `adopt` a copied-in deployctl first. `init`, `adopt --apply` and
+`webui` add their project by themselves.
+
+### `deployctl projects remove NAME`
+**Touches: local.** Takes a project off the list; nothing in it is touched. Refused while
+its panel is running.
 
 ---
 

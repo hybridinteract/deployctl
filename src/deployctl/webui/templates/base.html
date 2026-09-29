@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   {#- The project first: with two panels open, the tabs must say which is which. -#}
   {% set page_project = project if project is defined else (summary.project if summary else '') %}
-  <title>deployctl · {{ page_project }}{% if env %} · {{ env }}{% endif %}</title>
+  <title>deployctl{% if page_project %} · {{ page_project }}{% endif %}{% if env %} · {{ env }}{% endif %}</title>
   {# Light and dark both follow the system; panel.css defines each palette. #}
   <meta name="color-scheme" content="light dark">
   {#

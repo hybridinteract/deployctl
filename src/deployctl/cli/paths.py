@@ -87,6 +87,31 @@ def discover(start: pathlib.Path | None = None) -> pathlib.Path:
     return here / PROJECT_DIR_NAMES[0]
 
 
+def find_deploy_dir(repo: pathlib.Path) -> pathlib.Path | None:
+    """The deploy directory of the repository at ``repo`` — ``deploy/``, the older
+    ``deployctl/``, or the repository itself — or None.
+
+    Unlike :func:`discover` it looks only there: never upward, never at
+    ``$DEPLOYCTL_PROJECT``. That is what acting on ANOTHER project needs — the
+    control panel opening the next one, ``projects add`` — where a walk up from
+    the wrong place, or the calling project's inherited variable, would quietly
+    answer with a different project.
+    """
+    for candidate in (*(repo / name for name in PROJECT_DIR_NAMES), repo):
+        if is_project_root(candidate):
+            return candidate
+    return None
+
+
+def repo_top(path: pathlib.Path) -> pathlib.Path | None:
+    """The git repository ``path`` is in (its top folder), or None."""
+    path = path.expanduser().resolve()
+    for directory in (path, *path.parents):
+        if (directory / ".git").exists():
+            return directory
+    return None
+
+
 def _repo_root(project: pathlib.Path) -> pathlib.Path:
     for directory in (project, *project.parents):
         if (directory / ".git").exists():
@@ -193,11 +218,16 @@ def known_environments() -> list[str]:
     ``secrets.<env>.env`` / ``app.<env>.env`` hold values for an environment that is
     already listed via its own file — none of them is an environment in its own right.
     """
-    if not CONFIG_DIR.is_dir():
+    return environments_in(CONFIG_DIR)
+
+
+def environments_in(config_dir: pathlib.Path) -> list[str]:
+    """:func:`known_environments` for any project's ``config/`` — this one's or another's."""
+    if not config_dir.is_dir():
         return []
     return sorted(
         p.stem
-        for p in CONFIG_DIR.glob("*.env")
+        for p in config_dir.glob("*.env")
         if p.stem not in ("common", "local") and not p.name.startswith(("secrets.", "app."))
     )
 

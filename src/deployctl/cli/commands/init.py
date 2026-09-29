@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from .. import paths, scaffold, ui
+from .. import paths, projects, scaffold, ui
 
 
 def init(
@@ -37,6 +37,13 @@ def init(
             ui.ok(f"created {shown(path)}")
     else:
         ui.info("nothing to create — every stub already exists")
+    try:
+        registered = projects.register_current()
+    except projects.RegistryError as exc:
+        registered = None
+        ui.warn(f"not added to this machine's project list: {exc}")
+    if registered:
+        ui.ok(f"on this machine's project list as {registered.name} — its panel: {registered.url}")
 
     ui.separator()
     ui.info("Next steps:")

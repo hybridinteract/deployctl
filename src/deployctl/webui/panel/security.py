@@ -49,10 +49,11 @@ TOKEN = secrets.token_urlsafe(32)
 #: request arrived under a name that resolves here but is not ours — rebinding.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
 
-#: Routes reachable without a token: the page itself and its assets. They are safe
-#: because they only read, and a cross-origin page cannot read the response body.
+#: Routes reachable without a token: the page itself, its assets, and /healthz (which
+#: project a panel serves — asked by a launcher that has no token for it). They are
+#: safe because they only read, and a cross-origin page cannot read the response body.
 _TOKEN_EXEMPT_PREFIXES = ("/static/",)
-_TOKEN_EXEMPT_PATHS = frozenset({"/", "/favicon.ico"})
+_TOKEN_EXEMPT_PATHS = frozenset({"/", "/favicon.ico", "/healthz"})
 
 
 def _hostname(value: str) -> str:

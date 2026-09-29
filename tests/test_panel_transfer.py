@@ -8,7 +8,6 @@ subprocess that might find a real project on disk.
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -194,21 +193,22 @@ class TestYourAccess:
 
 
 class TestWhichProjectAPanelServes:
-    def _busy(self, monkeypatch, root):
-        from deployctl.cli.commands import webui
+    """A port is asked which project it serves (/healthz) before anything is offered."""
 
-        monkeypatch.setattr(webui, "_listener_pid", lambda port: os.getpid())
-        record = webui._registry(8799)
-        record.parent.mkdir(parents=True, exist_ok=True)
-        record.write_text(json.dumps({"project": "salescrm", "root": root, "pid": os.getpid()}))
-        return CliRunner().invoke(app, ["webui", "--port", "8799"])
+    def _busy(self, monkeypatch, root):
+        from deployctl.cli import projects
+
+        monkeypatch.setattr(projects, "probe", lambda port, timeout=0.5: {"kind": "project", "root": root,
+                                                                         "version": "0"})
+        return CliRunner().invoke(app, ["webui", "--port", "8799", "--no-browser"])
 
     def test_another_projects_panel_is_named_not_offered(self, configured, monkeypatch):
         result = self._busy(monkeypatch, "/somewhere/else/deploy")
         assert result.exit_code == 1
-        assert "it is the panel for salescrm" in result.output and "not this project" in result.output
-        assert "--port 8800" in result.output and "open http" not in result.output
+        assert "port 8799 is in use by the panel for /somewhere/else/deploy" in result.output
+        assert "--port 8899" in result.output and "already running" not in result.output
 
-    def test_this_projects_panel_is_offered(self, configured, monkeypatch):
+    def test_this_projects_panel_is_reused(self, configured, monkeypatch):
         result = self._busy(monkeypatch, str(paths.ROOT))
-        assert "it is this project's panel" in result.output
+        assert result.exit_code == 0, result.output
+        assert "already running: http://127.0.0.1:8799/" in result.output
