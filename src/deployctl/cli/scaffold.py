@@ -16,7 +16,7 @@ COMMON_STUB = """\
 # ============================================================================
 # Shared configuration — applies to every environment.
 # Per-environment settings live in config/<env>.env and win over this file.
-# NEVER COMMIT: this file holds registry credentials.
+# Shared with everyone who deploys (deployctl config export). NEVER COMMIT.
 # ============================================================================
 
 # Container/network/volume name prefix. Lowercase letters, digits and hyphens;
@@ -30,10 +30,20 @@ BASE_DOMAIN=
 # machine (deployctl image push). Every host pulls from here; nothing is ever
 # built on a deployment target.
 IMAGE_REPO=ghcr.io/your-org/your-app
+"""
 
-# Registry credentials used to `docker login` on each host before pulling.
-# A GitHub classic PAT with ONLY the read:packages scope is enough; if the org
-# uses SSO, authorize the token for it. GHCR_USER/GHCR_TOKEN also work.
+LOCAL_STUB = """\
+# ============================================================================
+# YOUR access — this machine only. Never exported, never uploaded to GitHub.
+# Everyone who deploys this project keeps their own copy of this file; CI logs
+# in to the registry with its own short-lived token instead.
+# NEVER COMMIT.
+# ============================================================================
+
+# Your registry login: used to `docker login` on each host when YOU deploy from
+# this machine, and to list image tags. A GitHub classic PAT with ONLY the
+# read:packages scope is enough (write:packages to `deployctl image push`); if
+# the org uses SSO, authorize the token for it. GHCR_USER/GHCR_TOKEN also work.
 REGISTRY_USER=
 REGISTRY_TOKEN=
 """
@@ -268,6 +278,8 @@ GITIGNORE = """\
 # config/ holds the secrets, generated/ is rebuilt from it on every deploy.
 config/*.env
 !config/*.env.example
+config/exports/
+config/imports/
 generated/*
 !generated/.gitkeep
 backups/
@@ -296,6 +308,8 @@ def scaffold(env: str, mode: str) -> list[pathlib.Path]:
 
     if _write_if_missing(paths.COMMON_CONFIG, COMMON_STUB, secret=True):
         written.append(paths.COMMON_CONFIG)
+    if _write_if_missing(paths.local_config(), LOCAL_STUB, secret=True):
+        written.append(paths.local_config())
 
     stub = SINGLE_STUB if mode == "single" else CLUSTER_STUB
     api_subdomain = "api" if env == "production" else f"api-{env}"

@@ -16,8 +16,8 @@
  * a button means adding a data-act and a case in onClick, not a <script> block.
  *
  * Sections, top to bottom: requests · output pane · actions · tabs · live
- * facts · config form · hosts widget · tags · copy · toasts · resizable split ·
- * wiring.
+ * facts · config form · hand the config on · hosts widget · tags · copy ·
+ * toasts · resizable split · wiring.
  */
 'use strict';
 
@@ -294,6 +294,30 @@
     swap('/config/problems?env=' + encodeURIComponent(ENV), '#problems');
   }
 
+  // ---- hand the config on: export and import ------------------------------------------
+  // Export: the server makes a passphrase, shows it once, and offers the download.
+  // Import: the file and passphrase go up twice — preview, then apply — so the
+  // server keeps neither between the two steps. After an import the page reloads
+  // into the panel the configuration now describes.
+
+  function exportConfig() {
+    swap('/config/export', '#exportResult', { method: 'POST' });
+  }
+
+  async function importConfig(stage, force) {
+    const form = document.getElementById('importForm');
+    const result = document.getElementById('importResult');
+    if (!form || !result) return;
+    const data = new FormData(form);
+    data.set('stage', stage);
+    if (force) data.set('force', '1');
+    result.innerHTML = '<span class="hint">' + (stage === 'apply' ? 'importing…' : 'opening the file…') + '</span>';
+    await swap('/config/import', result, { method: 'POST', body: data });
+    if (result.querySelector('[data-imported]')) {
+      setTimeout(() => { location.href = '/'; }, 900);
+    }
+  }
+
   // ---- hosts widget ----------------------------------------------------------------
 
   function addHost() {
@@ -524,6 +548,15 @@
       case 'copy':
         copyText(el);
         break;
+      case 'export':
+        exportConfig();
+        break;
+      case 'import-preview':
+        importConfig('preview', false);
+        break;
+      case 'import-apply':
+        importConfig('apply', el.dataset.force === '1');
+        break;
       default:
         break;
     }
@@ -551,6 +584,20 @@
     }
 
     initGutter();
+
+    // Enter in the import form previews, like the button — never a native submit.
+    const importForm = document.getElementById('importForm');
+    if (importForm) {
+      importForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        importConfig('preview', false);
+      });
+    }
+
+    // A project with no configuration yet: the start page opens on the import.
+    const start = document.querySelector('[data-start]');
+    const importDialog = document.getElementById('importDialog');
+    if (start && importDialog && typeof importDialog.showModal === 'function') importDialog.showModal();
 
     // Back/forward, or a hash typed into the address bar, opens that tab.
     window.addEventListener('hashchange', () => {

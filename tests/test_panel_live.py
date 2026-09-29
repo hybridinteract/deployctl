@@ -212,3 +212,10 @@ class TestPresentation:
     def test_anything_else_is_shown_as_is_and_never_linked(self):
         assert live.who("amal@mac") == {"label": "amal@mac", "url": ""}
         assert live.who("javascript:alert(1)") == {"label": "javascript:alert(1)", "url": ""}
+
+
+def test_your_access_says_ask_for_access_when_github_hides_the_repository():
+    local = {"registry_login": True}
+    ci_fact = live.Fact({"items": [{"id": "github", "status": "fail", "value": "no-access"}]}, "", 0.0)
+    row = next(r for r in live.access(local, None, ci_fact)["rows"] if r["id"] == "github")
+    assert "ask an admin to add you" in row["detail"]

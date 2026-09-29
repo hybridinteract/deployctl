@@ -69,10 +69,16 @@ untracked files are never deleted — they are listed. `--from` names the copy w
 the one found from the current directory.
 
 ### `deployctl migrate-config [--apply]`
-**Touches: local.** Brings `config/` up to the current tool. Today: removes `IMAGE_TAG` from
-every `config/<env>.env` — the tag is decided per command now (see *Image tags*) — and keeps
-its value as this machine's last-used tag, so `setup` still works. Prints the plan unless
-`--apply` is given; comments and every other line are left as they were.
+**Touches: local.** Brings `config/` up to the current tool:
+
+- removes `IMAGE_TAG` from every `config/<env>.env` — the tag is decided per command now (see
+  *Image tags*) — keeping its value as this machine's last-used tag, so `setup` still works;
+- moves `REGISTRY_USER` / `REGISTRY_TOKEN` out of the shared files into `config/local.env`:
+  one person's registry login, never exported or uploaded (since 0.13). The shared file keeps
+  a one-line note saying where it went; a value already in `local.env` wins.
+
+Prints the plan unless `--apply` is given — never a token's value. `--apply` snapshots
+`config/` first; comments and every other line are left as they were.
 
 ### `deployctl selftest [--skip-docker]`
 **Touches: local.** Renders every supported deployment shape into a temporary directory and
@@ -86,14 +92,42 @@ you the tool itself is intact.
 ### `deployctl envs`
 **Touches: local.** Lists configured environments with their mode, TLS mode and hosts.
 
-### `deployctl config --env E [--key K] [--show-secrets]`
+### `deployctl config show --env E [--key K] [--show-secrets]`
 **Touches: local.** Prints the fully resolved configuration and the source layers it came
-from, lowest precedence first.
+from, lowest precedence first. Plain `deployctl config --env E [--key K] [--show-secrets]` is
+the same command, as it always was.
 
 Credentials are masked two ways: by key name (`*_PASSWORD`, `*_TOKEN`, `*_SECRET`, `*_KEY`)
 and by value, so the passwords embedded in derived URLs — `DATABASE_URL`, `REDIS_URL`,
 `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` — are scrubbed too. `--show-secrets` prints
 everything in full; `--key K` prints one value and nothing else, for scripting.
+
+### `deployctl config export [--env E]… [--output PATH] [--generate-passphrase] [--json]`
+**Touches: local.** Writes this project's configuration to one encrypted file — for a
+teammate, a new laptop, or a copy kept off this machine. It holds every shared file of every
+environment (`common.env`, `<env>.env`, `app.<env>.env`, `secrets.<env>.env`; `--env`,
+repeatable, limits it) — everything the project needs to run. It never holds anyone's
+registry login (`config/local.env`, and those keys wherever they sit), ssh keys or GitHub
+login: each person sets up their own.
+
+AES-256-GCM with a key derived from the passphrase by scrypt; the project, environments and
+who exported it are inside the encryption, and a changed byte or a wrong passphrase opens
+nothing. Written to `config/exports/` (owner-only, ignored by git through its own
+`.gitignore`; the last 5 are kept) unless `--output` (`-o`) names a path — refused inside a git repository
+unless that path is ignored. The passphrase is asked for twice (at least 12 characters),
+generated and printed once with `--generate-passphrase`, or read from `$DEPLOYCTL_PASSPHRASE`
+(how the control panel passes it). `--json` for the panel.
+
+### `deployctl config import [FILE] [--preview] [--force] [--keep] [--json]`
+**Touches: local.** Loads a file made by `config export` into this project's `config/`. Without
+`FILE` it takes the one file waiting in `config/imports/` — it lists several rather than
+guess, and says where to put one when there is none. It refuses a file made for another
+repository, and a configuration that differs from the one here — naming the keys that
+differ, never their values — unless `--force`, which snapshots the current files first
+(`~/.deployctl/config-backups/`). `--preview` shows what would change and writes nothing.
+Files are written owner-only; a file taken from `config/imports/` is deleted afterwards
+unless `--keep`. It ends by listing what stays yours to set up: your registry login, your ssh
+key on the servers, your GitHub login.
 
 ---
 
@@ -404,7 +438,7 @@ See [50-WEBUI.md](50-WEBUI.md) for the panel itself and its safety model.
 | `ASSUME_YES=1` | Skip confirmation prompts. Set automatically by the CLI and the panel. (`backup restore` into the live database confirms in the CLI regardless — see above.) |
 | `DEPLOYCTL_ALLOW_SECRET_CHANGE=1` | What `--allow-secret-change` sets, for commands that have no flag for it. |
 | `IMAGE_TAG` | Overrides the configured tag for one invocation — how CI deploys what it just built. |
-| `REGISTRY_USER` / `REGISTRY_TOKEN` | Registry credentials, for CI. `GHCR_USER`/`GHCR_TOKEN` are accepted aliases. |
+| `REGISTRY_USER` / `REGISTRY_TOKEN` | Registry login for one invocation, over `config/local.env` — how CI logs the hosts in with its run's own `GITHUB_TOKEN`. `GHCR_USER`/`GHCR_TOKEN` are accepted aliases. |
 | `NO_COLOR=1` | Disable ANSI colour. |
 
 Only keys already present in the merged configuration, plus the credential and tag keys

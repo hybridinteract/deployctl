@@ -129,6 +129,12 @@ deployctl init --mode cluster --env production
 PROJECT_NAME=myapp
 BASE_DOMAIN=example.com
 IMAGE_REPO=ghcr.io/your-org/myapp
+```
+
+`config/local.env` — yours, on this machine only (never exported or uploaded; CI logs in
+with its own token):
+
+```sh
 REGISTRY_USER=your-github-user
 REGISTRY_TOKEN=ghp_…                 # classic PAT, read:packages only
 ```

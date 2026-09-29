@@ -72,6 +72,31 @@ replaces it on every host. The public half is marked `deployctl-ci@<owner/repo>/
 installed with `restrict` (no forwarding, no PTY). The deploy user is in the `docker` group,
 which is root-equivalent on the host: treat the key as root.
 
+### The registry login
+
+CI never uses a person's token. The deploy job hands the hosts the run's own
+`GITHUB_TOKEN` — short-lived, read-only for packages — and every host is logged out again
+once its image is pulled, so no registry credential outlives a run, CI's or a laptop's. Each
+person who deploys by hand keeps their own login in `config/local.env`, which is never part
+of the uploaded config: `ci sync-config` refuses while a registry token still sits in a
+shared file (`deployctl migrate-config --apply` moves it).
+
+Two conditions, both checked by `ci doctor`:
+
+- **The job that calls the deploy grants `packages: read`.** A called workflow gets no more
+  than its caller allows, and `ci.yml` is your file, so `ci init` never rewrites it — add
+  under its `deploy:` job:
+
+  ```yaml
+      permissions:
+        contents: read
+        packages: read
+  ```
+
+- **The package lets the repository in** — automatic for an image the repository's own
+  workflow published; otherwise the package's settings → *Manage Actions access* → add the
+  repository.
+
 ### Reaching the hosts
 
 GitHub's runners connect from a large, changing set of addresses. Three ways in:

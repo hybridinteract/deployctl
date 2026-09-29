@@ -26,12 +26,19 @@ horizontal scale. Read **[00-CONCEPTS.md](00-CONCEPTS.md)** first if you have no
 deployctl init --mode single --env production
 ```
 
-It creates `deploy/` in your repository. Fill in the three files. `deploy/config/common.env`:
+It creates `deploy/` in your repository. Fill in the files. `deploy/config/common.env`:
 
 ```sh
 PROJECT_NAME=myapp
 BASE_DOMAIN=example.com
 IMAGE_REPO=ghcr.io/your-org/myapp
+```
+
+`deploy/config/local.env` — **yours, on this machine only**: your registry login, used when
+you deploy from here and to list image tags. Never exported, never uploaded to GitHub; CI
+logs in with its own token, and everyone who deploys keeps their own:
+
+```sh
 REGISTRY_USER=your-github-user
 REGISTRY_TOKEN=ghp_…            # classic PAT, read:packages only
 ```

@@ -18,20 +18,20 @@ help = "single: one server, Let's Encrypt on the host, containerized Postgres/Re
 
 [[section]]
 id = "registry"
-title = "Registry access"
-description = "Credentials every host uses to docker-login before pulling the image. A GitHub classic PAT with only read:packages; SSO orgs must authorize it."
+title = "Your registry access — this machine only"
+description = "Your own GitHub login for pulling the image when you deploy from this machine, and for listing tags. Saved in config/local.env: never exported, never uploaded to GitHub — CI logs in with its own token, and each person who deploys sets theirs."
 
 [[section.field]]
 key = "REGISTRY_USER"
-label = "Registry user / org"
-target = "common"
+label = "Your registry user"
+target = "local"
 placeholder = "your-github-user"
 help = "Your GitHub username — who logs in. NOT the image path; that is IMAGE_REPO below."
 
 [[section.field]]
 key = "REGISTRY_TOKEN"
-label = "Registry token"
-target = "common"
+label = "Your registry token"
+target = "local"
 type = "password"
 secret = true
 placeholder = "ghp_…"
@@ -47,9 +47,9 @@ steps = [
   "Tick read:packages and nothing else. The servers only ever pull.",
   "Generate, then copy it straight away — GitHub shows the value once.",
   "If the organisation uses SSO: on the token's row, Configure SSO → Authorize. Skipping this is why a token that looks right fails on the host, mid-deploy.",
-  "Paste it here and press Save. It is stored in config/common.env and never sent back to this page.",
+  "Paste it here and press Save. It is stored in config/local.env — yours, on this machine only — and never sent back to this page.",
 ]
-note = "Pushing from this machine (`deployctl image push`) also needs write:packages. CI needs no token at all — `deployctl ci init` writes a workflow that uses the run's own GITHUB_TOKEN, so you only flip Settings → Actions → General → Workflow permissions to \"Read and write\"."
+note = "Pushing from this machine (`deployctl image push`) also needs write:packages. CI needs no token at all: its workflows build and deploy with the run's own GITHUB_TOKEN."
 
 [[section]]
 id = "project"

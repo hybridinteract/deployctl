@@ -33,9 +33,12 @@ Never hand-edit `generated/` or `config/secrets.<env>.env`. The first is rebuilt
 `config/` by step 2 and is safe to delete; the second is minted once and reused so that
 regenerating never invalidates live sessions.
 
-Everything an operator owns lives in `config/`, and it is gitignored — so back it up (an
-encrypted copy, a password manager, a secret store). If it is lost, **do not re-create it
-and deploy**: the new render would carry new secrets and blank API keys, and doctor refuses
+Everything an operator owns lives in `config/`, and it is gitignored — so keep a copy off
+this machine: `deployctl config export` (or Configure → *Share or back up* in the panel)
+writes it as one encrypted file, fit for a password manager, and `deployctl config import`
+restores it. Every Save, import and migration also snapshots `config/` into
+`~/.deployctl/config-backups/` first. If it is lost anyway, **do not re-create it and
+deploy**: the new render would carry new secrets and blank API keys, and doctor refuses
 exactly that (see *"this deploy would CHANGE secrets"* under Troubleshooting). Recover the
 values from the host's live `.env.<env>` instead.
 
@@ -358,8 +361,14 @@ server-side state that deployctl never overwrites, so nothing repairs it automat
 
 ### `doctor` fails: cannot resolve the image
 In order of likelihood: the tag does not exist (`deployctl image tags`); the package is
-private and `REGISTRY_TOKEN` is missing, expired, or not SSO-authorized for the org; CI has
-not published anything yet.
+private and your `REGISTRY_TOKEN` (`config/local.env`) is missing, expired, or not
+SSO-authorized for the org; CI has not published anything yet.
+
+**In CI**, the hosts log in with the run's own `GITHUB_TOKEN`, which can read the image only
+when the job calling the deploy grants `packages: read` — `deployctl ci doctor` checks your
+`ci.yml` and prints the lines to add — and the package lets the repository in: the package's
+settings → *Manage Actions access* lists the repository (automatic for images the
+repository's own workflow published).
 
 ### `doctor` fails: architecture mismatch
 The image was built for a different CPU than the host — classically an `arm64` image built
@@ -466,8 +475,11 @@ or add an exclusion in `scripts/common/remote.sh::push_artifacts`.
 
 - **Prune old images** on the hosts occasionally; every release leaves one behind:
   `deployctl deploy shell <host>` then `docker image prune -a --filter until=720h`.
-- **Rotate the registry token** when someone leaves: update `REGISTRY_TOKEN` in
-  `config/common.env`; the next deploy logs in with the new one.
+- **When someone leaves:** remove their ssh key from the deploy user's `authorized_keys` on
+  every host and their access to the repository. Their registry token was their own
+  (`config/local.env` on their machine) and never reached GitHub or a server — the hosts are
+  logged out after every pull — so there is nothing of theirs to rotate there; rotate the
+  shared secrets they could read (database passwords, API keys) if the departure calls for it.
 - **Rotate application secrets** deliberately, knowing the cost:
   `deployctl setup --env <env> --rotate-secrets`, then
   `deployctl deploy update --env <env> --allow-secret-change` (doctor refuses a changed

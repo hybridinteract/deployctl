@@ -124,6 +124,18 @@ SRC = REPO / "src" / "deployctl"
 _GROUPS = {name.split()[0] for name in REAL if " " in name}
 _TOP = {name for name in REAL if " " not in name}
 
+
+def _group_defaults() -> dict[str, set[str]]:
+    """Groups that run something bare (`deployctl config --env E` is `config show`), with their options."""
+    out = {}
+    for name, cmd in typer.main.get_command(app).commands.items():
+        if getattr(cmd, "commands", None) and getattr(cmd, "invoke_without_command", False):
+            out[name] = {o for p in cmd.params for o in getattr(p, "opts", []) if o.startswith("--")}
+    return out
+
+
+_GROUP_DEFAULTS = _group_defaults()
+
 #: `deployctl [global options] <word> <args>` — the args stop at anything that ends a
 #: shell command or starts a comment, prose or a nested example.
 _CALL = re.compile(
@@ -142,11 +154,19 @@ def _problems(text: str, *, prose_too: bool) -> list[str]:
     for match in _CALL.finditer(text):
         first = match.group(2)
         words = [w for w in (match.group(3) or "").split() if not w.startswith("<")]
-        if not prose_too and first not in _GROUPS and not any(w.startswith("--") for w in words):
+        has_option = any(w.startswith("--") for w in words)
+        if not prose_too and first not in _GROUPS and not has_option:
             continue
         if first in _GROUPS:
             if not words:
                 continue
+            if words[0].startswith("--") and first in _GROUP_DEFAULTS:
+                # `deployctl config --env E`: the group's own options, then nothing else.
+                bad = {w.split("=")[0] for w in words if w.startswith("--")} - _GROUP_DEFAULTS[first]
+                found += [f"`deployctl {first}` has no {o} ({match.group(0).strip()!r})" for o in sorted(bad)]
+                continue
+            if not prose_too and f"{first} {words[0]}" not in REAL and not has_option:
+                continue  # prose: "the deployctl config bundle"
             name, args = f"{first} {words[0]}", words[1:]
         elif first in _TOP:
             name, args = first, words
@@ -179,6 +199,9 @@ _SOURCES = sorted(
 
 class TestEveryShownCommandRuns:
     def test_the_scanner_catches_what_it_is_for(self):
+        assert _problems("deployctl config --env production --key X", prose_too=True) == []
+        assert _problems("deployctl config --env production --tag X", prose_too=True)
+        assert _problems("the deployctl config bundle", prose_too=False) == []
         assert _problems("deployctl doctor --env production", prose_too=True)
         assert _problems("deployctl ci deploy --env production --tags x", prose_too=True)
         assert not _problems("deployctl deploy doctor --env production --tag x | tee log", prose_too=True)
@@ -191,7 +214,10 @@ class TestEveryShownCommandRuns:
 
     @pytest.mark.parametrize("path", _SOURCES, ids=lambda p: str(p.relative_to(SRC)))
     def test_hints_in_the_tool_itself(self, path):
-        problems = _problems(path.read_text(), prose_too=False)
+        text = path.read_text()
+        if path.suffix == ".html":
+            text = re.sub(r"<[^>]+>", " ", text)  # `deployctl config export</code>` is markup, not an argument
+        problems = _problems(text, prose_too=False)
         assert not problems, f"{path.relative_to(REPO)}:\n  " + "\n  ".join(problems)
 
 

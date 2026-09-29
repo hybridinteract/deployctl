@@ -30,7 +30,7 @@ every detail spelled out, plus a troubleshooting table:
 ### 1 · Install the tool
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0
 deployctl --version
 ```
 
@@ -131,7 +131,7 @@ Everything above is a command. Use these for scripting, CI, or when you want the
 invocation in your shell history:
 
 ```bash
-uv tool install git+ssh://git@github.com/hybridinteract/deployctl@v0.12.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0   # once per machine
 deployctl init --mode single            # or --mode cluster; creates deploy/
 $EDITOR deploy/config/common.env          # project name, domain, image repo
 $EDITOR deploy/config/production.env      # hosts, database, TLS

@@ -144,3 +144,51 @@ class TestStatusTellsTheTruth:
     def test_an_exited_one_off_beside_a_live_container_is_fine(self, fakes):
         rc, out = _status(fakes, "api exited \n" + HEALTHY)
         assert rc == 0, out
+
+
+class TestNoRegistryLoginOutlivesTheRun:
+    """Whoever deployed — a person from a laptop, CI with its own token — no
+    registry credential is left on the host afterwards."""
+
+    CREDS = {"REGISTRY_USER": "amal", "REGISTRY_TOKEN": "ghp_x", "REGISTRY_HOST": "ghcr.io"}
+
+    def test_each_host_is_logged_out_after_its_pull(self):
+        rc, out = engine("update", **self.CREDS)
+        assert rc == 0, out
+        lines = out.splitlines()
+        for host in ("203.0.113.10", "203.0.113.11"):
+            login = next(i for i, l in enumerate(lines) if f"docker login ghcr.io on {host}" in l)
+            pull = next(i for i, l in enumerate(lines) if i > login and host in l and " pull" in l)
+            logout = next(i for i, l in enumerate(lines) if f"docker logout ghcr.io on {host}" in l)
+            assert login < pull < logout, host
+
+    def test_a_host_nobody_logged_in_is_left_alone(self):
+        rc, out = engine("update")
+        assert rc == 0, out
+        assert "docker logout" not in out, "without credentials this run did not log in, so it must not log out"
+
+
+_ACCESS_SSH = """#!/bin/bash
+case "$FAKE_ACCESS" in
+  denied) echo "deploy@203.0.113.10: Permission denied (publickey)." >&2; exit 255 ;;
+  down)   echo "ssh: connect to host 203.0.113.10 port 22: Operation timed out" >&2; exit 255 ;;
+esac
+exit 0
+"""
+
+
+@pytest.mark.parametrize("mode, access", [("denied", "denied"), ("down", "unreachable")])
+def test_state_says_why_a_host_cannot_be_reached(tmp_path, mode, access):
+    """A new teammate's key not on the server reads differently from a server that is down."""
+    (tmp_path / "ssh").write_text(_ACCESS_SSH)
+    (tmp_path / "ssh").chmod(0o755)
+    rc, out = engine("state", DEPLOYCTL_DRY_RUN="", PATH=f"{tmp_path}:{os.environ['PATH']}",
+                     FAKE_ACCESS=mode, HOSTS="203.0.113.10", PRIMARY_HOST="203.0.113.10")
+    assert f"HOST\t203.0.113.10\tprimary\t{access}" in out, out
+
+
+def test_parse_state_keeps_the_reason():
+    from deployctl.cli.commands.deploy import parse_state
+
+    state = parse_state("HOST\t203.0.113.10\tprimary\tdenied\n")
+    assert state["hosts"][0]["reachable"] is False and state["hosts"][0]["access"] == "denied"

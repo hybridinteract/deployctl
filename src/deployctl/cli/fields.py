@@ -12,6 +12,8 @@ dependency. A field's ``target`` decides which file the panel writes it to:
 ``env``     → ``config/<env>.env``       (this environment)
 ``app``     → ``config/app.<env>.env``   (project application keys, re-applied
                                           after every regenerate)
+``local``   → ``config/local.env``       (this machine's own registry login — never
+                                          exported, never uploaded to CI)
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import tomllib
 
 from . import paths
 
-VALID_TARGETS = ("common", "env", "app")
+VALID_TARGETS = ("common", "env", "app", "local")
 VALID_TYPES = ("text", "password", "number", "select", "textarea")
 
 

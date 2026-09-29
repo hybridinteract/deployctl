@@ -1,0 +1,36 @@
+{#-
+  Import a teammate's configuration: the file and its passphrase, then a preview of
+  what would change, then the import. Used by the start page (open from the start)
+  and the Configure tab. Every button is type="button": the form is sent by
+  panel.js as a multipart POST, twice — preview, then apply — so the server keeps
+  neither the file nor the passphrase in between.
+-#}
+<dialog class="guide import-dialog" id="importDialog" aria-labelledby="importTitle">
+  <div class="guide-body">
+    <div class="guide-head">
+      <h3 id="importTitle">Import a configuration</h3>
+      <button type="button" class="guide-x" data-act="guide-close" aria-label="Close">×</button>
+    </div>
+    <p class="guide-note first">The file someone on this project exported with <b>Export</b> (or
+      <code>deployctl config export</code>), and the passphrase they sent separately. Nothing is
+      written until you have seen what it holds.</p>
+    {#- method="post": Enter in the passphrase field submits natively, and a GET
+        would put the passphrase in the address bar and history. panel.js also
+        catches the submit and previews instead. -#}
+    <form id="importForm" class="import-form" method="post" enctype="multipart/form-data">
+      <label class="field">
+        <span>File</span>
+        <input type="file" name="file" accept=".enc" required>
+      </label>
+      <label class="field">
+        <span>Passphrase</span>
+        <input type="password" name="passphrase" autocomplete="off" spellcheck="false" required>
+      </label>
+      <div class="import-actions">
+        <button type="button" class="btn" data-act="import-preview">Preview</button>
+        <button type="button" class="btn ghost" data-act="guide-close">Cancel</button>
+      </div>
+    </form>
+    <div id="importResult" aria-live="polite"></div>
+  </div>
+</dialog>

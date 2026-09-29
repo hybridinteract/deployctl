@@ -8,6 +8,9 @@
 {% from "_macros.html" import flow, grid %}
 <section class="pane{% if landing == 'operate' %} active{% endif %}" id="pane-operate" role="tabpanel" aria-labelledby="tab-operate">
 
+  {#- Empty unless something is missing — then it is the first thing to see. -#}
+  <div data-live="access-alert"></div>
+
   <section class="group">
     <header class="group-head">
       <h2>Running now</h2>

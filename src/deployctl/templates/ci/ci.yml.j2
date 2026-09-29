@@ -23,7 +23,7 @@ concurrency:
 jobs:
   checks:
     name: Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@«ACTIONS.checkout» # «ACTIONS.checkout_version»
@@ -45,6 +45,11 @@ jobs:
     name: Deploy to «ENV»
     needs: publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/«DEPLOY_BRANCH»' && vars.AUTO_DEPLOY == 'true'
+    # A called workflow gets no more than this job grants: packages: read lets the
+    # deploy pull the image with the run's own token.
+    permissions:
+      contents: read
+      packages: read
     uses: ./.github/workflows/deploy.yml
     with:
       environment: «ENV»

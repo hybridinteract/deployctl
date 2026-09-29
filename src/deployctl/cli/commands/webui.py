@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -11,6 +12,28 @@ import time
 import typer
 
 from .. import paths, ui
+from ..transfer import project_name
+
+
+def _registry(port: int):
+    """``~/.deployctl/panels/<port>.json``: which project the panel on a port serves."""
+    return paths.state_home() / "panels" / f"{port}.json"
+
+
+def _recorded(port: int) -> dict | None:
+    """The project a running panel serves — None if unknown, or if its process is gone."""
+    try:
+        record = json.loads(_registry(port).read_text())
+        os.kill(int(record["pid"]), 0)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return record
+
+
+def _record(port: int) -> None:
+    path = _registry(port)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"project": project_name(), "root": str(paths.ROOT), "pid": os.getpid()}))
 
 
 def _listener_pid(port: int) -> int | None:
@@ -91,25 +114,35 @@ def webui(
 
     if existing is not None:
         ui.error(f"port {port} is already in use")
+        other = _recorded(port)
+        if other and other.get("root") != str(paths.ROOT):
+            # The dangerous case: "open it" would hand this operator another project's panel.
+            ui.warn(f"it is the panel for {other.get('project')} ({other.get('root')}) — not this project")
+            print()
+            ui.info(f"Run this project's panel beside it: deployctl webui --port {port + 1}")
+            raise typer.Exit(1)
         ui.hint(f"held by: {_describe(existing)}")
         print()
         ui.info("Either reuse it, stop it, or pick another port:")
-        print(f"    open http://127.0.0.1:{port}          # it is probably already the panel")
-        print(f"    deployctl webui --restart           # stop that one and start fresh")
-        print(f"    deployctl webui --stop              # just stop it")
+        if other:
+            print(f"    open http://127.0.0.1:{port}          # it is this project's panel")
+        else:
+            print(f"    open http://127.0.0.1:{port}          # probably a panel — check which project it shows")
+        print("    deployctl webui --restart           # stop that one and start fresh")
+        print("    deployctl webui --stop              # just stop it")
         print(f"    deployctl webui --port {port + 1}            # run alongside it")
         raise typer.Exit(1)
 
-    if not paths.known_environments():
-        ui.error("no environments configured yet")
-        ui.hint("run: deployctl init --mode single|cluster")
+    if not paths.is_project_root(paths.ROOT):
+        ui.error(f"no deployctl project here ({paths.ROOT} has no project/project.env)")
+        ui.hint("run it from inside the application's repository — or start one: deployctl init --mode single|cluster")
         raise typer.Exit(2)
 
     try:
         import uvicorn  # noqa: F401
     except ImportError:
         ui.error("the panel's dependencies are missing from this installation")
-        ui.hint("reinstall deployctl: uv tool install --force git+ssh://git@github.com/hybridinteract/deployctl")
+        ui.hint("reinstall deployctl: uv tool install --force git+https://github.com/hybridinteract/deployctl")
         raise typer.Exit(1) from None
 
     env = os.environ.copy()
@@ -117,7 +150,10 @@ def webui(
     env["DEPLOYCTL_PROJECT"] = str(paths.ROOT)
 
     ui.header("deployctl control panel")
+    ui.kv("serving", f"{project_name()}  ({paths.ROOT})")
     ui.info(f"http://127.0.0.1:{port}   (Ctrl+C to stop)")
+    if not paths.known_environments():
+        ui.info("no configuration yet — the panel opens on Import (a teammate's export) or how to start one")
     ui.warn("localhost only, no authentication — never expose this port")
     print()
 
@@ -127,6 +163,7 @@ def webui(
             "--host", "127.0.0.1", "--port", str(port)]
     if reload:
         argv += ["--reload", "--reload-dir", str(paths.TOOL_ROOT)]
+    _record(port)
     try:
         subprocess.run(argv, cwd=str(paths.workdir()), env=env, check=True)
     except KeyboardInterrupt:
@@ -134,3 +171,5 @@ def webui(
         ui.info("panel stopped")
     except subprocess.CalledProcessError as exc:
         raise typer.Exit(exc.returncode) from exc
+    finally:
+        _registry(port).unlink(missing_ok=True)

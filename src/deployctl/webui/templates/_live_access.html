@@ -1,0 +1,37 @@
+{#- Your access on this machine: what no shared config can give — your registry
+    login, your ssh key on the servers, your GitHub login. On Operate it renders
+    only when something is missing (alert_only); on Setup, always. -#}
+{% from "_macros.html" import pill, codeblock %}
+{% if access.missing or not alert_only %}
+<section class="group access{% if access.missing %} tone-warn{% endif %}">
+  <header class="group-head">
+    <h2>Your access on this machine</h2>
+    <p>Each person's own — never part of an exported or uploaded configuration.</p>
+  </header>
+  <ul class="checklist">
+    {% for row in access.rows %}
+    <li class="check">
+      {{ pill(row.status, {'ok': 'done', 'todo': 'to do', 'fail': 'blocked', 'unknown': 'unknown'}.get(row.status, row.status)) }}
+      <div class="check-body">
+        <b>{{ row.title }}</b>
+        <span class="dim">{{ row.detail }}</span>
+        {% if row.id == 'registry' and row.status != 'ok' %}
+        <button type="button" class="btn ghost sm" data-act="goto" data-tab="configure" data-anchor="sec-registry">Set it in Configure →</button>
+        {% endif %}
+        {% if row.status == 'fail' and row.host %}
+        {% if public_key %}
+        <span class="dim small">Send this public key (not a secret) to whoever runs the project:</span>
+        {{ codeblock('pubkey-' ~ loop.index, public_key) }}
+        <span class="dim small">They add it with:</span>
+        {{ codeblock('addkey-' ~ loop.index, "ssh " ~ row.user ~ "@" ~ row.host ~ " 'cat >> ~/.ssh/authorized_keys' < their-key.pub") }}
+        {% else %}
+        <span class="dim small">This machine has no ssh key yet — create one, then send its .pub file:</span>
+        {{ codeblock('keygen-' ~ loop.index, 'ssh-keygen -t ed25519') }}
+        {% endif %}
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}

@@ -14,7 +14,7 @@ import dataclasses
 
 from deployctl.cli import config as cli_config
 from deployctl.cli import fields as cli_fields
-from deployctl.cli import paths
+from deployctl.cli import paths, snapshots
 from deployctl.cli.envfile import patch_env_file, read_env_file
 
 
@@ -52,6 +52,7 @@ def _target_path(env: str, target: str):
         "common": paths.COMMON_CONFIG,
         "env": paths.config_file(env),
         "app": paths.app_values_file(env),
+        "local": paths.local_config(),
     }[target]
 
 
@@ -71,7 +72,7 @@ def save_form(env: str, form: dict[str, str]) -> dict[str, int]:
     cfg = load(env)
     field_map = cli_fields.by_key(cfg.mode)
 
-    buckets: dict[str, dict[str, str]] = {"common": {}, "env": {}, "app": {}}
+    buckets: dict[str, dict[str, str]] = {"common": {}, "env": {}, "app": {}, "local": {}}
     for key, raw_value in form.items():
         value = str(raw_value).strip()
 
@@ -111,6 +112,15 @@ def save_form(env: str, form: dict[str, str]) -> dict[str, int]:
             env_bucket["PRIMARY_HOST"] = hosts[0]
 
     applied = {}
+    if any(buckets.values()):
+        # The values being replaced were minted once or typed once; keep them.
+        snapshots.take("save")
+    if buckets["local"] and not paths.local_config().is_file():
+        # Start it from the stub that says what the file is and why it is never shared.
+        from deployctl.cli.envfile import write_env_file
+        from deployctl.cli.scaffold import LOCAL_STUB
+
+        write_env_file(paths.local_config(), LOCAL_STUB)
     for target, values in buckets.items():
         if values:
             applied[target] = patch_env_file(_target_path(env, target), values)

@@ -1,0 +1,40 @@
+{#- What an import would do (preview) or did (apply). Key names only, never values. -#}
+{% from "_macros.html" import pill %}
+{% if error %}
+<p class="callout danger">{{ error }}</p>
+{% elif stage == 'preview' %}
+{% set s = outcome.summary %}
+{% set plan = outcome.plan %}
+<div class="import-preview">
+  <table class="kv">
+    <tr><th>Project</th><td>{{ s.project }} <span class="dim">{{ s.repository }}</span></td></tr>
+    <tr><th>Exported</th><td>{{ s.created_at }} by {{ s.created_by }} <span class="dim">(deployctl {{ s.deployctl }})</span></td></tr>
+    <tr><th>Environments</th><td>{{ s.environments | join(', ') }}</td></tr>
+  </table>
+  <ul class="plan">
+    {% for name in plan.new %}<li>{{ pill('ok', 'new') }} <code>config/{{ name }}</code></li>{% endfor %}
+    {% for name, keys in plan.differs.items() %}
+    <li>{{ pill('warn', 'replace') }} <code>config/{{ name }}</code> <span class="dim">— {{ keys | length }} differ: {{ keys | join(', ') }}</span></li>
+    {% endfor %}
+    {% for name in plan.same %}<li>{{ pill('done', 'same') }} <code>config/{{ name }}</code></li>{% endfor %}
+    {% for name in plan.kept %}<li>{{ pill('unknown', 'kept') }} <code>config/{{ name }}</code> <span class="dim">— not in the file, left as it is</span></li>{% endfor %}
+  </ul>
+  <p class="dim small">Never in a shared file, so yours to set up afterwards: your registry login
+    ({{ 'already set here' if outcome.access.registry else 'not set here yet' }}), your ssh key on the
+    servers, your GitHub login.</p>
+  {% if plan.new or plan.differs %}
+  <button type="button" class="btn{% if plan.differs %} danger{% endif %}" data-act="import-apply"
+          data-force="{{ '1' if plan.differs else '0' }}">
+    {{ 'Replace my configuration' if plan.differs else 'Import' }}
+  </button>
+  {% if plan.differs %}<span class="hint">The current files are copied aside first.</span>{% endif %}
+  {% else %}
+  {{ pill('ok', 'Already current — nothing to import') }}
+  {% endif %}
+</div>
+{% else %}
+<div class="import-done" data-imported="1">
+  {{ pill('ok', 'Imported ' ~ (outcome.written | length) ~ ' file(s)') }}
+  <p>Opening the panel…</p>
+</div>
+{% endif %}
