@@ -3,6 +3,111 @@
 Versions are git tags (`vX.Y.Z`); projects install one with
 `uv tool install git+https://github.com/hybridinteract/deployctl@vX.Y.Z`.
 
+## 0.14.0
+
+One console for all your projects: a person sets up once — their GitHub login — then adds
+any number of projects and switches between them from the panel. A project is added as a
+new first deployment or as a teammate's export, and the docs now take someone who has never
+seen deployctl from nothing to deploying on every merge.
+
+**One setup per person**
+- `deployctl access` checks your GitHub login, where your registry login comes from, and
+  your ssh key, and prints the command that fixes each missing piece. Inside a project it also
+  shows your role on the repository.
+- **Your `gh` login is the default registry login** once it has `read:packages`
+  (`gh auth refresh -h github.com -s read:packages`). Nothing to fill in per project.
+- `deployctl access set-token` saves a read:packages-only token for every project on this
+  machine, in `~/.deployctl/credentials.env`. It is the narrower choice for production: the
+  `gh` token can also write to your repositories, and a host holds the login for the length
+  of a pull. The token is checked with GitHub first. It is read from a prompt or
+  `$DEPLOYCTL_REGISTRY_TOKEN`, never from argv, and fine-grained tokens are refused because
+  ghcr.io takes only classic ones. `access forget-token` removes it.
+- **Which login is used**, in order:
+  1. the environment (CI's own `GITHUB_TOKEN`);
+  2. `config/local.env` (now a per-project override);
+  3. the saved token;
+  4. the `gh` login.
+
+  The last two apply only to ghcr.io. The login is resolved only by commands that pull an
+  image, never by the status the panel reads every few seconds.
+- **A registry login never outlives a run**, however it ends. The engine logs each host it
+  logged in out again on exit, error, cancel or Ctrl+C, in the same cleanup that releases the
+  deploy lock.
+
+**Many projects, one panel each**
+- `deployctl projects list|add|remove` manages `~/.deployctl/projects.json`: name,
+  repository and port for each project. `init`, `adopt --apply` and `webui` add their
+  project by themselves.
+- **Every project's panel has a port of its own**, given once from 8766 and kept.
+  `projects add PATH --port P` changes it. **8765 is now the home panel**: the project list
+  and Add project, opened by `deployctl webui` outside a project.
+- `deployctl webui`:
+  - reuses a panel already running for this project instead of starting a second;
+  - refuses `--port` while that panel runs;
+  - names whatever else holds the port.
+
+  New options: `--detach` (background, log in `~/.deployctl/logs/`, returns once the panel
+  answers), `--json`, and `--no-browser`. The browser opens by itself on a desktop, never over
+  ssh.
+- **Which panel serves a port is asked of the port itself** (`/healthz`, token-exempt). It
+  replaces `~/.deployctl/panels/<port>.json`, which could outlive a crashed panel.
+- `webui --stop` only ever stops a deployctl panel, and waits for the process to exit, not
+  just for the port to close. Panels finish in-flight requests within 5 seconds.
+
+**Panel**
+- **Projects ▾**, top right, lists every project on this machine: whether its panel is
+  running, and what its production hosts run. Choosing one opens its own panel, started if
+  need be. The panel you leave keeps running, with its jobs.
+- **Add project** takes a repository's path:
+  - a project opens;
+  - a teammate's clone opens on Import;
+  - a repository without a project gets the **New project** form (`deployctl init --set …`),
+    which opens on Setup;
+  - a copied-in deployctl gets the `adopt` commands.
+- **Every dangerous confirmation names the project**, first.
+- **Your access** reads `deployctl access`. The registry login is *optional* and no longer
+  raises the alert on Operate; a read:packages token can be saved from the card; and a
+  refused ssh key comes with the exact line the owner runs to add it.
+- **A host that does not answer reads "hosts unreachable — tag unknown"**, in the top bar
+  and the switcher. It used to read "nothing deployed yet".
+
+**Also**
+- `deployctl init --set KEY=VALUE` fills in a new project's name, domain, image, hosts and
+  app contract as it is created. Values are checked before anything is written, are never
+  secret, and are refused for a file that already exists.
+- Config snapshots are kept per repository **path**
+  (`~/.deployctl/config-backups/<repository>-<id>/`), so two repositories with the same name
+  never prune each other's.
+- `backup` honours `$DEPLOYCTL_HOME`.
+- Docs:
+  - `05-QUICKSTART` is now *Getting started*: install, access, the panel, adding a project,
+    the first deployment, CI/CD, day to day;
+  - new `15-FIRST-DEPLOYMENT` covers every step, what success looks like, and what to do when
+    it fails;
+  - README and `50-WEBUI` cover projects and the switcher.
+- Tests: a Playwright suite drives the panel in Chromium against real panel processes —
+  switching with a job running, a teammate's clone through Import, a new project to Setup,
+  confirmations. It runs as `uv run pytest -m e2e` and as its own CI job. New dev dependency:
+  `pytest-playwright`.
+
+**Upgrading**
+
+Stop any running panel first: from 0.14, `deployctl webui --stop --port 8765` recognises an
+older one. Then:
+
+```bash
+uv tool install --force git+https://github.com/hybridinteract/deployctl@v0.14.0
+gh auth login && gh auth refresh -h github.com -s read:packages
+deployctl access                            # where your registry login now comes from
+deployctl ci init --env production --force  # workflows that install this version
+```
+
+- Panels move to per-project ports: `deployctl projects list` shows them, and bookmarks or
+  `ssh -L` forwards for 8765 now reach the home panel.
+- A login in `config/local.env` still wins for that project. Empty it to use your `gh` login
+  or saved token instead.
+- Older config snapshots stay where they were, in `~/.deployctl/config-backups/<repository>/`.
+
 ## 0.13.0
 
 A second person can deploy the same project: its configuration travels as one encrypted

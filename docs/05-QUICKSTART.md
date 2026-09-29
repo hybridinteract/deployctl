@@ -1,134 +1,144 @@
-# 05 — Quick start
+# 05 — Getting started
 
-**Goal: a running deployment, and the control panel open in your browser.**
+**Goal: from nothing to a live project that deploys on every merge, driven from the control
+panel.**
 
-Five commands in a terminal, then everything else happens in the browser. Nothing here is
-optional and nothing here is ambiguous — run the blocks in order, top to bottom.
-
-> **Before you start**, you need two things this guide does not create for you:
->
-> 1. **A server** you can `ssh` into, with **Docker** installed and a **deploy user** that
->    can run `docker` without `sudo`. → Don't have one? Do
->    the panel's **Setup → Prepare the server** (or `deployctl server bootstrap-script`) first;
->    it takes about ten minutes on a fresh Ubuntu server.
-> 2. **A container image in a registry.** → Don't have one? Step 4 creates the CI workflow
->    that builds it.
-
-> **Joining a project someone already deploys?** Skip the rest of this page:
->
-> 1. Install the tool (Step 1 below) and clone the application's repository.
-> 2. Ask whoever runs the project for an export (panel: Configure → *Share or back up* →
->    **Export**) and its passphrase, sent separately.
-> 3. `deployctl webui` inside the clone — it opens on **Import**. Pick the file, type the
->    passphrase, check the preview, import.
-> 4. Work through **Your access on this machine** (Setup tab): your own registry login, your
->    ssh key on the servers (send them your public key), and `gh auth login`.
+Two steps happen once per machine, in a terminal: install the tool, and log in to GitHub.
+Everything after that happens in the browser, and every button shows the `deployctl`
+command it runs.
 
 ---
 
-## Step 1 · Install the tool
+## 1 · Install the tool
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0
 deployctl --version
 ```
 
-Once per machine. `deployctl` lands on your PATH in its own isolated environment — nothing
-is added to your application's dependencies. The machine also needs `ssh` and `rsync`, and
-`docker` for `validate`'s compose check.
+Once per machine. `deployctl` lands on your PATH in its own isolated environment: nothing is
+added to your application's dependencies. The machine also needs `ssh`, `rsync`, the GitHub
+CLI (`gh`, from https://cli.github.com), and `docker` for `validate`'s compose check.
+Upgrade by installing a newer tag with `--force`.
 
-## Step 2 · Create an environment
-
-```bash
-deployctl init --mode single --env production
-```
-
-| | |
-|---|---|
-| `--mode single` | One server. App, Postgres and Redis all run there as containers, with a free Let's Encrypt certificate. |
-| `--mode cluster` | Several servers behind a load balancer, with managed Postgres and Redis. |
-
-`--env` is just a label (`production`, `staging`, `demo`). Run `init` again with a
-different `--env` to add more. **Mode is per environment**, so production can be `single`
-while staging is `cluster`, or the reverse.
-
-Run it from the root of your application's repository: it creates `deploy/`, and from then
-on `deployctl` finds that directory from anywhere inside the repository.
-
-## Step 3 · Describe your application
+## 2 · Log in to GitHub — the one setup for every project
 
 ```bash
-$EDITOR deploy/project/project.env
+gh auth login
+gh auth refresh -h github.com -s read:packages
+deployctl access
 ```
 
-The one file the panel does not manage: which module gunicorn serves, the health endpoint,
-the migration command, how the image is built. Every field is commented. You edit this
-**once per project** — see
-[40-ADOPTING-A-NEW-PROJECT.md](40-ADOPTING-A-NEW-PROJECT.md) for a walkthrough of each key.
+Your `gh` login is the only personal setup, whichever projects you work on:
+- it reads your repositories;
+- it runs CI/CD's actions;
+- with `read:packages`, it pulls images when you deploy from this machine, and lists their
+  tags.
 
-## Step 4 · Publish an image
+`deployctl access` checks all of it — your GitHub login, where your registry login comes
+from, your ssh key — and prints the command that fixes whatever is missing.
 
-Skip this if your registry already has an image to deploy.
+> **A narrower login for the servers.** When you deploy from your machine, a host logs in to
+> the registry for the pull, and is logged out again afterwards, even when the run fails.
+> Your `gh` token can also write to your repositories. For production, a token that can only
+> read packages is the narrower choice:
+>
+> ```bash
+> deployctl access set-token
+> ```
+>
+> It prompts for a GitHub classic token with only `read:packages`, checks it with GitHub,
+> and keeps it in `~/.deployctl/credentials.env`, for every project. CI never uses any of
+> this: it logs in with its own short-lived token.
+
+## 3 · Open the control panel
 
 ```bash
-deployctl ci init          # writes .github/workflows/build-image.yml — push to build
-# ── or, to build from this machine right now ──
-deployctl image push
+deployctl webui
 ```
 
-## Step 5 · Open the control panel
+Run it inside an application's repository and it opens that project's panel. Run it
+anywhere else and it opens the **home panel**: your projects, and **Add project**. Each
+project has a panel of its own, on a port of its own that it keeps (`deployctl projects
+list` shows them). The **Projects ▾** switcher, top right, moves between them.
 
-```bash
-deployctl webui            # → http://127.0.0.1:8765
-```
+The panel binds to **127.0.0.1 only** and has no login. It drives your ssh keys, so never
+expose the port. See [50-WEBUI.md](50-WEBUI.md#safety-model) for what protects it from the
+other pages open in your browser.
 
-Ctrl+C stops it. If the port is taken: `--stop` ends the old one, `--restart` replaces it,
-`--port 8790` runs alongside.
+## 4 · Add a project — new, or one you are joining
 
-> It binds to **127.0.0.1 only** and has no login. It drives your ssh keys — never expose
-> the port. See [50-WEBUI.md](50-WEBUI.md#safety-model) for what protects it from the other
-> pages open in your browser.
+**Add project**, then the path of the application's repository on this machine. What is in
+the repository decides what comes next.
 
----
+**Joining a project someone already deploys.** Three things are needed: `gh` logged in
+(step 2), access to the repository, and your ssh key on its servers.
+1. Clone the repository.
+2. **Add project** with the clone's path. It opens on **Import**.
+3. Ask whoever runs the project for an export (their panel: Configure → *Share or back up*
+   → **Export**), with its passphrase sent separately.
+4. Pick the file, type the passphrase, check the preview, **Import**.
+5. **Your access on this machine**, at the top of Setup, says what is left. For a server that
+   refuses your key, it shows the one line the project's owner runs to let it in.
 
-# In the browser
+When every row is done, you can deploy.
 
-The panel opens on **Setup** and the stepper under the top bar — Server → First deploy →
-CI/CD → Live — always names the next step.
+**A new project.** A repository without a deployctl project gets the **New project** form:
+the shape (one server, or a cluster), the domain, the image, the servers, and how your app
+runs. **Create the project** opens it on **Setup**. Go on with step 5.
 
-## Setup
+**A repository with deployctl copied into it** (from before the tool was packaged) — move it
+onto the installed tool first, in a terminal, where the change can be reviewed:
+`deployctl adopt` shows the plan, `deployctl adopt --apply` makes it; commit, then add it.
+See [40-ADOPTING-A-NEW-PROJECT.md](40-ADOPTING-A-NEW-PROJECT.md#a-repository-with-deployctl-copied-into-it).
 
-1. **Prepare the server** — the root script for this environment, and the one line that
-   runs it on each new server. Skip it for a server you already bootstrapped.
-2. **Finish the configuration** — lists what still blocks a deploy; **Open Configure**,
-   fill in the sections and press **Save**. The form adapts to the environment's shape;
-   Save writes the same `config/*.env` files the CLI reads.
-3. **First deploy** — type the tag CI published (or pick it from **Recent tags from the
-   registry**), then work the rail left to right:
+## 5 · The first deployment
+
+Done from your machine, once per environment, on the **Setup** tab:
+
+1. **Prepare the server.** One root script per new server — the only terminal step:
+   `deployctl server bootstrap-script --env production | ssh root@<server-ip> 'bash -s'`.
+2. **Finish the configuration.** Open Configure, fill in what is missing (databases, TLS…),
+   and Save.
+3. **First deploy.** Pick the tag CI published, then work the rail from left to right:
 
 ```
 1 Regenerate → 2 Validate → 3 Doctor → 4 Init → 5 SSL: obtain → 6 Status
    (local)       (local)     (reads)   (deploys)  (single only)
 ```
 
-Steps 1–3 change nothing on a server; Init is the first one that does. **Do not skip
-Doctor** — it is what catches an unreachable host or an unpullable image *before* anything
-starts. **SSL: obtain** appears only for a single-server Let's Encrypt environment.
+Steps 1–3 change nothing on a server; Init is the first that does. **Do not skip Doctor**:
+it catches an unreachable host or an image that cannot be pulled *before* anything starts.
 
-## CI/CD
+Every step in detail — what it does, what success looks like, what to do when it fails —
+and the checklist to go through before you start (server, DNS, a published image, access):
+**[15-FIRST-DEPLOYMENT.md](15-FIRST-DEPLOYMENT.md)**.
 
-Work down the checklist — each row has the button that fixes it: Connect GitHub, Generate
-workflows (then commit and push them), Create the CI key, Pin host keys, Sync config. Then
-**Redeploy what's running** once, to prove it, and turn automatic deploys on. Details:
+## 6 · CI/CD — deploy on every merge
+
+On the **CI/CD** tab, work down the checklist; each row has the button that fixes it:
+- Connect GitHub.
+- Generate workflows, then commit and push them.
+- Create the CI key.
+- Pin host keys.
+- Sync config.
+
+Then **Redeploy what's running** once, to prove it, and turn automatic deploys on. Details:
 [35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md).
 
-## Afterwards, day to day
+## 7 · Day to day
 
-**Merge to the deploy branch** — that is the release. The panel opens on **Operate**: what
-runs and who shipped it, **Deploy a version** / **Roll back** through GitHub, the release
-history with **Roll back to this**, and **Apply a config change** (Save → Sync config →
-Deploy the change). Deploying from this machine is still there, folded under
-**Emergency**, for when GitHub is the thing that is broken.
+- **Release: merge to the deploy branch.** CI builds, checks and deploys it with a health
+  gate, and puts every host back if one fails. The panel opens on **Operate**: what runs and
+  who shipped it.
+- **Roll back:** **Roll back** on Operate, or **Roll back to this** on any earlier release in
+  the history. Both go through GitHub, so every deploy lands in one history.
+- **A config change** (a worker count, a password, a new key): change it in Configure and
+  Save, then **Sync config**, then **Deploy the change**.
+- **Switching projects:** **Projects ▾**, top right. The panel you leave keeps running, with
+  any job it has going; each confirmation names the project it acts on.
+- **When GitHub is the thing that is broken:** Operate → **Emergency** deploys straight from
+  this machine, with the same engine, lock, health gate and revert.
 
 ---
 
@@ -137,11 +147,12 @@ Deploy the change). Deploying from this machine is still there, folded under
 Every button above is a command. Use these for scripting, CI, or an audit trail:
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0   # once per machine
-deployctl init --mode single --env production
-$EDITOR deploy/config/common.env               # project name, domain, image repo
-$EDITOR deploy/config/production.env           # hosts, database, TLS
-$EDITOR deploy/project/project.env             # how to run YOUR app
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0   # once per machine
+gh auth login && deployctl access                                           # once per machine
+deployctl init --mode single --env production    # in the repository; creates deploy/
+$EDITOR deploy/config/common.env                 # project name, domain, image repo
+$EDITOR deploy/config/production.env             # hosts, database, TLS
+$EDITOR deploy/project/project.env               # how to run YOUR app
 
 deployctl ci init --env production                     # GitHub Actions builds the image; push → its tag
 deployctl server bootstrap-script --env production | ssh root@<server-ip> 'bash -s'   # new server only
@@ -156,10 +167,11 @@ Then for each release:
 
 ```bash
 deployctl image tags                                   # what can I deploy?
-deployctl deploy update --env production --tag <tag>   # rolling, health-gated, reverted on failure
+deployctl ci deploy --env production --tag <tag>       # through GitHub Actions
+deployctl deploy update --env production --tag <tag>   # or straight from this machine
 ```
 
-Add `--dry-run` to any deploy command to print every ssh/rsync/compose command it would
+Add `--dry-run` to any deploy command to print every ssh, rsync and compose command it would
 run, without touching a host.
 
 ---
@@ -168,13 +180,13 @@ run, without touching a host.
 
 | Symptom | Do this |
 |---|---|
-| `deployctl: command not found` | Step 1 — `uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0`, and make sure uv's tool directory is on your PATH (`uv tool update-shell`). |
+| `deployctl: command not found` | Step 1, and make sure uv's tool directory is on your PATH: `uv tool update-shell`. |
 | Commands act on the wrong project | They use the nearest `deploy/` above the current directory. Check with `deployctl envs`, or pass `--project-dir`. |
-| `no environments configured` | Step 2 has not been run. |
-| Panel says `port 8765 is already in use` | `deployctl webui --restart` |
-| Doctor fails on ssh | Key loaded? Host up? Port 22 open to you? The error names which. |
-| Doctor fails on `cannot resolve <image>` | Wrong tag, or a private package with no `REGISTRY_TOKEN`. Try `deployctl image tags`. |
-| Doctor fails on permissions | `deployctl deploy doctor --fix` repairs what does not need root; anything else is printed as an exact command to run on the host. |
+| `no environments configured` | The project has no configuration on this machine yet: Import one (step 4), or create one. |
+| `port … is in use` | The command names what holds it. A deployctl panel: `deployctl webui --stop`. Anything else: move this project's panel with `deployctl projects add . --port <port>`. |
+| *Recent tags* or Doctor: no registry login, or `cannot resolve <image>` | `deployctl access`. Usually `gh auth refresh -h github.com -s read:packages`, or a wrong tag. |
+| Doctor fails on ssh | Your key is not on the server for the deploy user (**Your access** shows the line that adds it), or the host is down. The error says which. |
+| Doctor fails on permissions | `deployctl deploy doctor --fix` repairs what needs no root. Anything else is printed as an exact command to run on the host. |
 | Health gate times out after a deploy | `deployctl deploy logs --host <host>`. The gate prints the last HTTP status and what it usually means. |
 
 Full troubleshooting: [30-OPERATIONS.md § Troubleshooting](30-OPERATIONS.md#troubleshooting).

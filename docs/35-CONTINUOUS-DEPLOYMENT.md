@@ -77,9 +77,10 @@ which is root-equivalent on the host: treat the key as root.
 CI never uses a person's token. The deploy job hands the hosts the run's own
 `GITHUB_TOKEN` — short-lived, read-only for packages — and every host is logged out again
 once its image is pulled, so no registry credential outlives a run, CI's or a laptop's. Each
-person who deploys by hand keeps their own login in `config/local.env`, which is never part
-of the uploaded config: `ci sync-config` refuses while a registry token still sits in a
-shared file (`deployctl migrate-config --apply` moves it).
+person who deploys by hand uses their own login — their `gh` login, a token saved with
+`deployctl access set-token`, or `config/local.env` — none of which is part of the uploaded
+config: `ci sync-config` refuses while a registry token still sits in a shared file
+(`deployctl migrate-config --apply` moves it).
 
 Two conditions, both checked by `ci doctor`:
 
