@@ -1,8 +1,9 @@
 name: test
 
 # Every change to the tool is tested the way it is used: the suite on the oldest
-# and newest supported Python, the bash engine through shellcheck, and the built
-# wheel on its own — a missing template or script only shows up once installed.
+# and newest supported Python, the control panel in a real browser, the bash
+# engine through shellcheck, and the built wheel on its own — a missing template
+# or script only shows up once installed.
 
 on:
   pull_request:
@@ -35,6 +36,25 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest -q
+
+  browser:
+    name: the panel in a browser
+    # Switching projects, Add project, New project and the confirmations, driven in
+    # Chromium against real panel processes — scratch repositories, TEST-NET hosts,
+    # an ssh and a gh that never connect (tests/e2e).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest -m e2e -q
 
   shellcheck:
     name: shellcheck

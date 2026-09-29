@@ -30,6 +30,10 @@ _PROJECT_APP = "deployctl.webui.panel:app"
 _HOME_APP = "deployctl.webui.panel.home:app"
 #: How long a panel has to start answering before it counts as failed.
 _START_TIMEOUT = 20.0
+#: How long a stopping panel may finish the requests it is serving (a read of the
+#: hosts can take a while) before it exits anyway. Jobs are not requests: they run
+#: in their own sessions and outlive the panel.
+_GRACE = 5
 
 
 def _listener_pid(port: int) -> int | None:
@@ -197,7 +201,7 @@ def webui(
     # Through THIS interpreter, not a bare `uvicorn` from PATH: a `uv tool install`
     # puts only `deployctl` on PATH, not its dependencies' scripts.
     argv = [sys.executable, "-m", "uvicorn", _PROJECT_APP if root else _HOME_APP,
-            "--host", "127.0.0.1", "--port", str(port)]
+            "--host", "127.0.0.1", "--port", str(port), "--timeout-graceful-shutdown", str(_GRACE)]
     if reload:
         argv += ["--reload", "--reload-dir", str(paths.TOOL_ROOT)]
 
@@ -268,6 +272,16 @@ def _start_detached(argv, cwd, env, port: int, root: pathlib.Path | None, out: _
         ui.hint("stop it: deployctl webui --stop")
 
 
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _is_panel(pid: int | None) -> bool:
     """A deployctl panel — this version's, or an older one without /healthz — by its command line."""
     return bool(pid) and "deployctl.webui.panel" in _describe(pid)
@@ -286,9 +300,11 @@ def _stop(port: int, out: _Out) -> None:
         ui.info(f"stopping the panel on port {port} (pid {existing})")
     try:
         os.kill(existing, signal.SIGTERM)
-        for _ in range(30):  # up to ~3s for a clean shutdown
+        # Until the process is gone, not just the port: a panel stops listening at
+        # once, then finishes the requests it is serving.
+        for _ in range((_GRACE + 2) * 10):
             time.sleep(0.1)
-            if _listener_pid(port) is None:
+            if not _alive(existing):
                 break
         else:
             os.kill(existing, signal.SIGKILL)

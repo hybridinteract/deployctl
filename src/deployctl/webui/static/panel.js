@@ -16,14 +16,15 @@
  * a button means adding a data-act and a case in onClick, not a <script> block.
  *
  * Sections, top to bottom: requests · output pane · actions · tabs · live
- * facts · config form · hand the config on · hosts widget · tags · copy ·
- * toasts · resizable split · wiring.
+ * facts · config form · hand the config on · your access · projects · hosts
+ * widget · tags · copy · toasts · resizable split · wiring.
  */
 'use strict';
 
 (function () {
   const TOKEN = document.body.dataset.token || '';
   const ENV = document.body.dataset.env || '';
+  const PROJECT = document.body.dataset.project || '';
 
   // ---- requests --------------------------------------------------------------
 
@@ -181,7 +182,10 @@
    */
   function confirmText(label, where, values) {
     const d = document.body.dataset;
-    let text = label + ' — ' + ENV.toUpperCase() + '\n\n'
+    // The project first: with several panels open, the environment alone could be
+    // any project's production.
+    let text = label + ' — ' + PROJECT + ' · ' + ENV.toUpperCase() + '\n\n'
+      + 'Project:      ' + PROJECT + '\n'
       + 'Environment:  ' + ENV + '\n'
       + 'Acts on:      ' + (where || '—') + '\n'
       + 'Hosts:        ' + (d.hosts || '—') + '\n';
@@ -331,6 +335,58 @@
       form.reset();
       setTimeout(() => refreshLive(true), 1500);
     }
+  }
+
+  // ---- projects: switch, add, create ---------------------------------------------
+  // Each project's panel is its own process on its own port. Opening another starts
+  // it if need be (the server runs `webui --detach`) and then navigates there; this
+  // panel keeps running, with any job it has going. The address comes from the
+  // server and is checked here too: only ever another panel on this machine.
+
+  const PANEL_URL = /^http:\/\/127\.0\.0\.1:\d{2,5}\/$/;
+
+  async function openProject(name) {
+    const body = new FormData();
+    body.set('name', name);
+    toast('opening ' + name + '…', true);
+    try {
+      const res = await fetch(withToken('/projects/open'), { method: 'POST', body, headers: { 'X-Deployctl-Token': TOKEN } });
+      const data = await res.json();
+      if (data.ok && PANEL_URL.test(data.url)) {
+        location.href = data.url;
+        return;
+      }
+      toast(data.error || ('could not open ' + name), false);
+    } catch (err) {
+      toast(String(err), false);
+    }
+  }
+
+  /** Swap a project form's answer in; open the project it names, if it names one. */
+  async function sendProjectForm(formId, url, resultId, waiting) {
+    const form = document.getElementById(formId);
+    const result = document.getElementById(resultId);
+    if (!form || !result) return;
+    result.innerHTML = '<span class="hint">' + waiting + '</span>';
+    await swap(url, result, { method: 'POST', body: new FormData(form) });
+    const opening = result.querySelector('[data-open-name]');
+    if (opening) openProject(opening.dataset.openName);
+  }
+
+  /** Fill the elements in root that load on their own (data-lazy="<url>"), once each. */
+  function loadLazy(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-lazy]:not([data-loaded])').forEach((el) => {
+      el.dataset.loaded = '1';
+      swap(el.dataset.lazy, el);
+    });
+  }
+
+  async function loadSwitcher() {
+    const menu = document.getElementById('switcherMenu');
+    if (!menu) return;
+    await swap('/projects', menu);
+    loadLazy(menu);
   }
 
   // ---- hosts widget ----------------------------------------------------------------
@@ -575,6 +631,15 @@
       case 'token-save':
         saveToken(el.closest('form'));
         break;
+      case 'project-open':
+        openProject(el.dataset.name);
+        break;
+      case 'project-add':
+        sendProjectForm('addProjectForm', '/projects/add', 'addProjectResult', 'looking…');
+        break;
+      case 'project-new':
+        sendProjectForm('newProjectForm', '/projects/new', 'newProjectResult', 'creating…');
+        break;
       default:
         break;
     }
@@ -589,8 +654,18 @@
       if (e.target.matches('.token-form')) {
         e.preventDefault();
         saveToken(e.target);
+      } else if (e.target.id === 'addProjectForm') {
+        e.preventDefault();
+        sendProjectForm('addProjectForm', '/projects/add', 'addProjectResult', 'looking…');
+      } else if (e.target.id === 'newProjectForm') {
+        e.preventDefault();
       }
     });
+    // The switcher's list loads each time it opens: which panels run changes.
+    // (toggle does not bubble, hence the capture.)
+    document.addEventListener('toggle', (e) => {
+      if (e.target.id === 'switcher' && e.target.open) loadSwitcher();
+    }, true);
     const tablist = document.querySelector('[role="tablist"]');
     if (tablist) tablist.addEventListener('keydown', onTabKey);
 
@@ -619,6 +694,13 @@
         importConfig('preview', false);
       });
     }
+
+    // The home panel opened from a repository with no project yet: Add project, filled in.
+    const addDialog = document.getElementById('addProjectDialog');
+    if (document.querySelector('[data-add-open]') && addDialog && typeof addDialog.showModal === 'function') {
+      addDialog.showModal();
+    }
+    loadLazy(document);
 
     // A project with no configuration yet: the start page opens on the import.
     const start = document.querySelector('[data-start]');

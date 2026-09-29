@@ -7,10 +7,11 @@ explanation with them rather than deferring everything to the docs.
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 from . import paths
-from .envfile import write_env_file
+from .envfile import patch_env_file, write_env_file
 
 COMMON_STUB = """\
 # ============================================================================
@@ -294,6 +295,47 @@ def _write_if_missing(path: pathlib.Path, content: str, *, secret: bool) -> bool
         return False
     write_env_file(path, content, secret=secret)
     return True
+
+
+#: What `init --set` may fill in, and the file each goes to: the values a new
+#: project is created with (the control panel's New project form). Nothing secret —
+#: a command line is visible to every process on the machine — so passwords and
+#: databases are left to the Configure tab, which writes the files directly.
+INIT_KEYS = {
+    "PROJECT_NAME": "common",
+    "BASE_DOMAIN": "common",
+    "IMAGE_REPO": "common",
+    "API_SUBDOMAIN": "env",
+    "HOSTS": "env",
+    "SSH_USER": "env",
+    "ACME_EMAIL": "env",
+    "APP_MODULE": "project",
+    "APP_PORT": "project",
+    "HEALTH_PATH": "project",
+    "MIGRATE_CMD": "project",
+    "CELERY_APP": "project",
+    "WITH_BEAT": "project",
+    "DOCKERFILE": "project",
+    "BUILD_CONTEXT": "project",
+    "BUILD_TARGET": "project",
+}
+
+
+def init_target(target: str, env: str) -> pathlib.Path:
+    """The file an ``INIT_KEYS`` target names."""
+    return {"common": paths.COMMON_CONFIG, "env": paths.config_file(env), "project": paths.PROJECT_CONFIG}[target]
+
+
+def apply_initial_values(env: str, values: dict[str, str], written: list[pathlib.Path]) -> None:
+    """Fill ``values`` into the stubs this run wrote. Keys are checked by the caller."""
+    by_file: dict[pathlib.Path, dict[str, str]] = {}
+    for key, value in values.items():
+        by_file.setdefault(init_target(INIT_KEYS[key], env), {})[key] = value
+    for path, keyed in by_file.items():
+        assert path in written, f"{path} was not created by this run"
+        patch_env_file(path, keyed)
+        if path == paths.PROJECT_CONFIG:
+            os.chmod(path, 0o644)  # committed, not secret: patch_env_file locks what it writes
 
 
 def scaffold(env: str, mode: str) -> list[pathlib.Path]:

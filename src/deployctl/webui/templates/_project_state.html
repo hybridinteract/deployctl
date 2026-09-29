@@ -1,0 +1,9 @@
+{#- One project's running tag, for the switcher: what `deploy status` says its hosts run. -#}
+{%- if not env -%}not configured yet
+{%- elif error -%}<span title="{{ error }}">{{ env }} · unknown</span>
+{%- elif status.tag -%}{{ env }} · {{ status.tag }}
+{%- elif status.split -%}{{ env }} · hosts differ
+{%- elif status.hosts | rejectattr('reachable') | list -%}{{ env }} · hosts unreachable
+{%- elif status.hosts -%}{{ env }} · not deployed
+{%- else -%}{{ env }} · unknown
+{%- endif -%}

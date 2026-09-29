@@ -74,16 +74,21 @@ def test_the_bootstrap_card_names_this_environment(client):
     assert "deployctl server bootstrap-script --env production | ssh root@203.0.113.10 &#39;bash -s&#39;" in page
 
 
+def test_the_page_names_its_project_for_the_dialog(client):
+    assert 'data-project="demo"' in client.get("/?env=production").text
+
+
 def test_a_save_hands_back_the_hosts(client):
     saved = client.post(f"/config?env=production&t={T}", data={"HOSTS": "203.0.113.11"})
     assert saved.status_code == 200, saved.text
     assert 'data-hosts="203.0.113.11"' in saved.text
 
 
-def test_the_dialog_names_environment_hosts_and_tag():
+def test_the_dialog_names_project_environment_hosts_and_tag():
+    """With several panels open, "production" alone could be any project's."""
     js = PANEL_JS.read_text()
     body = js[js.index("function confirmText"):js.index("function runAction")]
-    for needed in ("ENV", "d.hosts", "values.tag", "where"):
+    for needed in ("PROJECT", "ENV", "d.hosts", "values.tag", "where"):
         assert needed in body, f"confirmText no longer names {needed}"
     assert re.search(r"confirm\(confirmText\(el\.dataset\.label, el\.dataset\.where, got\.values\)\)", js), (
         "runAction must ask confirmText's question"
@@ -184,6 +189,19 @@ def test_the_bar_shows_what_runs_and_what_is_wrong(client, canned):
     assert "1 problem(s)" in bar, "the restarting worker must show"
     assert "config differs from GitHub" in bar
     assert "auto-deploy on" in bar
+
+
+@pytest.mark.parametrize("reachable, said", [(False, "hosts unreachable — tag unknown"), (True, "nothing deployed yet")])
+def test_no_tag_is_only_nothing_deployed_when_the_hosts_answered(client, monkeypatch, reachable, said):
+    """A host that did not answer has run something unknown — perhaps production."""
+    server = {"env": "production", "tag": None, "split": False, "hosts": [
+        {"host": "203.0.113.10", "role": "primary", "reachable": reachable, "tag": "", "deployed_at": "",
+         "deployed_by": "", "services": []}]}
+    answers = {("deploy", "status"): server, ("ci", "doctor"): CI}
+    monkeypatch.setattr(live, "CACHE", live.Cache(read=lambda argv: (answers[tuple(argv[:2])], "")))
+    bar = client.get(f"/live/bar?env=production&t={T}").text
+    assert said in bar
+    assert ("nothing deployed yet" in bar) is reachable
 
 
 def test_the_production_card_escapes_what_the_hosts_say(client, canned):

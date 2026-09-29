@@ -22,6 +22,7 @@ import json
 import pathlib
 import re
 import socket
+import subprocess
 import urllib.request
 
 from . import home, paths
@@ -136,6 +137,25 @@ def inspect(path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     if deploy_dir is None:
         raise NotAProject("no-project", repo, f"{repo.name} has no deployctl project yet (no deploy/)")
     return repo, deploy_dir
+
+
+_GITHUB_REMOTE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
+
+
+def suggest(repo: pathlib.Path) -> dict[str, str]:
+    """Starting values for a new project in ``repo``: its name, and the image CI would
+    publish — ``ghcr.io/<owner>/<repo>`` from the ``origin`` remote, lowercased, as
+    registries require."""
+    values = {"PROJECT_NAME": re.sub(r"[^a-z0-9-]", "-", repo.name.lower()).strip("-") or "app"}
+    try:
+        origin = subprocess.run(["git", "-C", str(repo), "remote", "get-url", "origin"],
+                                capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        origin = ""
+    match = _GITHUB_REMOTE.search(origin)
+    if match:
+        values["IMAGE_REPO"] = f"ghcr.io/{match.group(1)}/{match.group(2)}".lower()
+    return values
 
 
 # ---- changing the list --------------------------------------------------------------------

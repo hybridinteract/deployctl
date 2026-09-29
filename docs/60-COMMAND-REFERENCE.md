@@ -36,10 +36,19 @@ Two options go before the command, and apply to all of them:
 
 ## Setup
 
-### `deployctl init --mode single|cluster [--env NAME]`
+### `deployctl init --mode single|cluster [--env NAME] [--set KEY=VALUE]…`
 **Touches: local.** Scaffolds `config/` and `project/` for a new environment. `--mode`
 picks the deployment shape; `--env` names the environment (default `production`). Run it
-again with a different `--env` to add another. Does not overwrite an existing config.
+again with a different `--env` to add another. Does not overwrite an existing config. In a
+git repository it also puts the project on this machine's list (`projects list`).
+
+`--set KEY=VALUE` (repeatable) fills a value in as the stubs are created — how the control
+panel's New project form works. The keys: `PROJECT_NAME`, `BASE_DOMAIN`, `IMAGE_REPO`
+(lowercase) into `config/common.env`; `API_SUBDOMAIN`, `HOSTS`, `SSH_USER`, `ACME_EMAIL` into
+`config/<env>.env`; `APP_MODULE`, `APP_PORT`, `HEALTH_PATH`, `MIGRATE_CMD`, `CELERY_APP`,
+`WITH_BEAT`, `DOCKERFILE`, `BUILD_CONTEXT`, `BUILD_TARGET` into `project/project.env`. Never a
+secret — passwords go in through Configure — and refused, before anything is written, for a
+file that already exists.
 
 ### `deployctl setup --env E [--tag T] [--force] [--rotate-secrets]`
 **Touches: local.** Renders `generated/<env>/` — the compose files, nginx config, env file

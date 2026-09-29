@@ -19,10 +19,11 @@
   <link rel="stylesheet" href="/static/panel.css">
   <link rel="icon" href="data:,">
 </head>
-{# The token every acting request carries, and the environment the page is bound
-   to, read once by panel.js rather than interpolated into each URL. The hosts are
-   what a confirmation dialog names, with the tag it was given — see confirmText. #}
-<body data-token="{{ token }}" data-env="{{ env }}" data-hosts="{{ summary.hosts|join(' ') if summary else '' }}">
+{# The token every acting request carries, and the project and environment the page
+   is bound to, read once by panel.js rather than interpolated into each URL. The
+   project, environment and hosts are what a confirmation names, with the tag it was
+   given — see confirmText. #}
+<body data-token="{{ token }}" data-project="{{ page_project }}" data-env="{{ env }}" data-hosts="{{ summary.hosts|join(' ') if summary else '' }}">
 {% block body %}{% endblock %}
 <script src="/static/panel.js"></script>
 </body>

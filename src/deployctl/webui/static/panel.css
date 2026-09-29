@@ -397,3 +397,32 @@ table.kv td, table.kv th { border-bottom:0; padding:.15rem .3rem; }
   .rail > li:not(:last-child)::after { right:auto; left:1rem; top:auto; bottom:-1.02rem; transform:rotate(90deg); }
   .project { max-width:none; }
 }
+
+/* ---- projects: the switcher, Add project, New project, the home panel -------------- */
+.hint.ok { color:var(--ok); }
+.switcher { position:relative; }
+.switcher > summary { list-style:none; cursor:pointer; }
+.switcher > summary::-webkit-details-marker { display:none; }
+.switcher-menu { position:absolute; right:0; top:calc(100% + .35rem); z-index:20; min-width:18rem; max-width:24rem;
+  max-height:70vh; overflow:auto; padding:.45rem; background:var(--panel); border:1px solid var(--border2);
+  border-radius:var(--r); box-shadow:var(--shadow); }
+.switcher-list { list-style:none; margin:0 0 .4rem; padding:0; }
+.switcher-item { display:grid; grid-template-columns:auto 1fr; column-gap:.5rem; align-items:center; width:100%;
+  padding:.4rem .5rem; border:0; border-radius:var(--r); background:none; color:var(--text); font:inherit;
+  text-align:left; cursor:pointer; }
+.switcher-item:hover:not(:disabled) { background:var(--inset); }
+.switcher-item:disabled { cursor:default; }
+.switcher-item.current { background:var(--accent-soft); }
+.switcher-item .hint { grid-column:2; }
+.switcher-name { font-weight:600; font-size:.8rem; }
+.switcher-add { width:100%; }
+.dot { width:.5rem; height:.5rem; border-radius:50%; background:var(--border2); }
+.dot.on { background:var(--ok); }
+dialog.add-project-dialog { max-width:34rem; }
+.new-project { display:flex; flex-direction:column; gap:.55rem; margin-top:.4rem; }
+.new-project fieldset { border:0; margin:0; padding:0; gap:.3rem; }
+.new-project legend { font-size:.75rem; font-weight:600; color:var(--muted); margin-bottom:.2rem; }
+.new-project fieldset label, .check-line { font-size:.78rem; display:flex; gap:.4rem; align-items:baseline; }
+.new-project details .field { margin-top:.5rem; }
+.token-form { display:flex; flex-direction:column; gap:.4rem; margin-top:.4rem; }
+.project-list .check-body > div { margin-top:.35rem; }

@@ -177,7 +177,17 @@ class TestTheCommand:
         result = CliRunner().invoke(app, ["projects", "add", str(repo), "--json"])
         assert result.exit_code == 2
         assert json.loads(result.stdout) | {"error": ""} == {
-            "ok": False, "error": "", "status": "no-project", "root": str(repo.resolve())}
+            "ok": False, "error": "", "status": "no-project", "root": str(repo.resolve()),
+            "suggested": {"PROJECT_NAME": "acme"}}
+
+    @pytest.mark.parametrize("origin", ["git@github.com:Acme-Corp/Sales.CRM.git", "https://github.com/Acme-Corp/Sales.CRM"])
+    def test_the_image_is_suggested_from_origin_in_lowercase(self, tmp_path, origin):
+        import subprocess
+
+        repo = tmp_path / "Sales.CRM"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", origin], check=True)
+        assert projects.suggest(repo) == {"PROJECT_NAME": "sales-crm", "IMAGE_REPO": "ghcr.io/acme-corp/sales.crm"}
 
     def test_add_list_remove(self, tmp_path):
         repo = _repo(tmp_path, "acme")

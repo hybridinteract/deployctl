@@ -59,7 +59,8 @@ def add(
     try:
         project, added = projects.add(path, name=name, port=port)
     except projects.NotAProject as exc:
-        _fail(as_json, str(exc), status=exc.status, root=str(exc.repo))
+        extra = {"suggested": projects.suggest(exc.repo)} if exc.status == "no-project" else {}
+        _fail(as_json, str(exc), status=exc.status, root=str(exc.repo), **extra)
         if not as_json:
             if exc.status == "copied-in":
                 ui.hint(f"deployctl adopt --from {exc.repo / 'deployctl'}   (then again with --apply)")

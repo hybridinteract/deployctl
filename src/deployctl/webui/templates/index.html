@@ -19,6 +19,7 @@
   </div>
   <div class="livebar" data-live="bar" aria-live="polite"><span class="hint">reading the hosts and GitHub…</span></div>
   <div class="topbar-right">
+    {% include "_switcher.html" %}
     <button type="button" class="iconbtn" data-act="refresh" title="Read the hosts and GitHub again">↻</button>
     <button type="button" class="iconbtn" data-act="term-toggle" title="Show / hide the output pane">▌ Output</button>
   </div>
@@ -66,5 +67,6 @@
 
 {#- Page level, not inside a tab: a dialog in a hidden (display: none) tab never shows. -#}
 {% include "_import_dialog.html" %}
+{% include "_add_project_dialog.html" %}
 <div class="toasts" id="toasts" aria-live="polite"></div>
 {% endblock %}
