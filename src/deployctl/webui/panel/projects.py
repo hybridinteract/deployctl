@@ -19,6 +19,7 @@ serves rather than trusting a file a crashed panel could have left behind.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 import shlex
@@ -51,13 +52,15 @@ _REQUIRED = ("PROJECT_NAME", "BASE_DOMAIN", "IMAGE_REPO", "HOSTS")
 
 @router.get("/healthz")
 def healthz(request: Request) -> dict:
-    """Which panel this is: ``kind`` home or project, and the project's deploy directory.
+    """Which panel this is: ``kind`` home or project, the project's deploy directory,
+    and its process — so ``webui --stop`` can end it even where lsof is not installed.
 
     Needs no token — a launcher has none for a panel it did not start — and shows
     nothing a local process could not read from disk anyway.
     """
     kind = request.app.state.kind
-    return {"kind": kind, "root": str(paths.ROOT) if kind == "project" else "", "version": __version__}
+    return {"kind": kind, "root": str(paths.ROOT) if kind == "project" else "", "version": __version__,
+            "pid": os.getpid()}
 
 
 def _this_root(request: Request) -> str:

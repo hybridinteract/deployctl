@@ -288,12 +288,17 @@ def _is_panel(pid: int | None) -> bool:
 
 
 def _stop(port: int, out: _Out) -> None:
-    existing = _listener_pid(port)
+    health = projects.probe(port)
+    # lsof first; where it is not installed, the panel's own word for its process.
+    existing = _listener_pid(port) or (health or {}).get("pid")
     if existing is None:
-        if not out.as_json:
-            ui.info(f"nothing is listening on 127.0.0.1:{port}")
-        return
-    if not (projects.probe(port) or _is_panel(existing)):
+        if projects.port_is_free(port):
+            if not out.as_json:
+                ui.info(f"nothing is listening on 127.0.0.1:{port}")
+            return
+        raise out.fail(f"port {port} is held by a process this machine cannot name (is lsof installed?) — "
+                       "not a deployctl panel, so it is left alone")
+    if not (health or _is_panel(existing)):
         # Whatever else it is — a database, another app — it is not ours to stop.
         raise out.fail(f"port {port} is held by {_describe(existing)} — not a deployctl panel, so it is left alone")
     if not out.as_json:

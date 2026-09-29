@@ -189,7 +189,8 @@ def add(path: pathlib.Path, name: str | None = None, port: int | None = None) ->
         chosen_port = port or (existing.port if existing else _free_port(others))
 
         project = Project(chosen_name, str(repo), chosen_port, str(deploy_dir.relative_to(repo)))
-        _save([*others, project])
+        if project != existing:  # `webui` registers on every start; most of the time nothing changed
+            _save([*others, project])
     return project, existing is None
 
 
@@ -245,8 +246,14 @@ def _free_port(others: list[Project]) -> int:
 
 
 def port_is_free(port: int) -> bool:
-    """Nothing is listening on 127.0.0.1:<port> — checked by binding it."""
+    """A panel could listen on 127.0.0.1:<port> — checked by binding it the way uvicorn does.
+
+    With SO_REUSEADDR, as uvicorn binds: a port a panel has just left sits in TIME_WAIT
+    for a while, which stops a plain bind but not uvicorn's — without it, a restart
+    would be refused as "in use". A socket still listening there refuses both.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", port))
         except OSError:
@@ -254,10 +261,16 @@ def port_is_free(port: int) -> bool:
     return True
 
 
+#: For this machine's own panels only: never through a proxy. With HTTP_PROXY set, as
+#: on many company networks, the default opener would send 127.0.0.1 to the proxy,
+#: and a running panel would look like none at all.
+_LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def probe(port: int, timeout: float = 0.5) -> dict | None:
     """What the panel on a port says it serves (``/healthz``); None if no panel answers there."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=timeout) as response:
+        with _LOOPBACK.open(f"http://127.0.0.1:{port}/healthz", timeout=timeout) as response:
             data = json.loads(response.read())
     except (OSError, ValueError):
         return None

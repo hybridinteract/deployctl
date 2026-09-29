@@ -99,6 +99,15 @@ class TestTheList:
         assert (second.name, second.port) == ("crm", projects.FIRST_PORT + 1)
         assert (again, added_again) == (first, False)
 
+    def test_adding_again_rewrites_nothing(self, tmp_path):
+        """`webui` registers its project on every start."""
+        repo = _repo(tmp_path, "acme")
+        projects.add(repo)
+        before = projects.registry_file().stat()
+        projects.add(repo)
+        after = projects.registry_file().stat()
+        assert (before.st_ino, before.st_mtime_ns) == (after.st_ino, after.st_mtime_ns)
+
     def test_a_port_already_listening_is_skipped(self, tmp_path, monkeypatch):
         monkeypatch.setattr(projects, "port_is_free", lambda port: port != projects.FIRST_PORT)
         assert projects.add(_repo(tmp_path, "acme"))[0].port == projects.FIRST_PORT + 1

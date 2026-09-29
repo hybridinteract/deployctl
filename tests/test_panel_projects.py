@@ -92,8 +92,10 @@ class TestTheBoundary:
         assert getattr(client, method)(path).status_code == 403
 
     def test_healthz_needs_none_and_names_the_project(self, client):
-        assert client.get("/healthz").json() == {"kind": "project", "root": str(paths.ROOT),
-                                                 "version": client.get("/healthz").json()["version"]}
+        import os
+
+        health = client.get("/healthz").json()
+        assert (health["kind"], health["root"], health["pid"]) == ("project", str(paths.ROOT), os.getpid())
 
     def test_the_home_panel_has_no_project_routes(self, home_client):
         assert home_client.get("/healthz").json()["kind"] == "home"
