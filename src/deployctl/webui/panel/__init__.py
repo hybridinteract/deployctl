@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from deployctl.cli import paths
 
+from . import personal
 from .routes import router
 from .security import LocalOnlyMiddleware
 
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.add_middleware(LocalOnlyMiddleware)
     app.mount("/static", StaticFiles(directory=str(paths.WEBUI_DIR / "static")), name="static")
     app.include_router(router)
+    app.include_router(personal.router)
     return app
 
 

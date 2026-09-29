@@ -40,10 +40,12 @@ LOCAL_STUB = """\
 # NEVER COMMIT.
 # ============================================================================
 
-# Your registry login: used to `docker login` on each host when YOU deploy from
-# this machine, and to list image tags. A GitHub classic PAT with ONLY the
-# read:packages scope is enough (write:packages to `deployctl image push`); if
-# the org uses SSO, authorize the token for it. GHCR_USER/GHCR_TOKEN also work.
+# Usually leave these empty: your gh login (with read:packages), or a token saved
+# once for every project with `deployctl access set-token`, is used instead — see
+# `deployctl access`. Set them only for a different login on THIS project, or a
+# registry other than ghcr.io. A GitHub classic PAT with ONLY read:packages is
+# enough (write:packages to `deployctl image push`); if the org uses SSO,
+# authorize the token for it. GHCR_USER/GHCR_TOKEN also work.
 REGISTRY_USER=
 REGISTRY_TOKEN=
 """

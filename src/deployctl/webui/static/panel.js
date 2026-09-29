@@ -318,6 +318,21 @@
     }
   }
 
+  // ---- your access: a read:packages token ------------------------------------------
+  // The token goes up once, in the body; the server hands it to `deployctl access
+  // set-token` in that command's environment and never sends it back.
+
+  async function saveToken(form) {
+    const result = document.getElementById('tokenResult');
+    if (!form || !result) return;
+    result.innerHTML = '<span class="hint">checking with GitHub…</span>';
+    await swap('/access/token', result, { method: 'POST', body: new FormData(form) });
+    if (result.querySelector('[data-saved]')) {
+      form.reset();
+      setTimeout(() => refreshLive(true), 1500);
+    }
+  }
+
   // ---- hosts widget ----------------------------------------------------------------
 
   function addHost() {
@@ -557,6 +572,9 @@
       case 'import-apply':
         importConfig('apply', el.dataset.force === '1');
         break;
+      case 'token-save':
+        saveToken(el.closest('form'));
+        break;
       default:
         break;
     }
@@ -565,6 +583,14 @@
   function init() {
     document.addEventListener('click', onClick);
     document.addEventListener('input', (e) => e.target.classList.remove('invalid'));
+    // Forms that arrive in live fragments: Enter must not submit one as a page
+    // load, which would put the token in a URL.
+    document.addEventListener('submit', (e) => {
+      if (e.target.matches('.token-form')) {
+        e.preventDefault();
+        saveToken(e.target);
+      }
+    });
     const tablist = document.querySelector('[role="tablist"]');
     if (tablist) tablist.addEventListener('keydown', onTabKey);
 

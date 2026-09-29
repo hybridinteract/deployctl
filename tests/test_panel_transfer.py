@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from deployctl.cli import paths, transfer
+from deployctl.cli import access, paths, transfer
 from deployctl.cli.main import app
 from deployctl.webui.panel import create_app, live, routes, security
 
@@ -154,29 +154,37 @@ class TestYourAccess:
          "deployed_at": "", "deployed_by": "", "services": []}]}
     CI = {"env": "production", "items": [
         {"id": "github", "status": "ok", "title": "GitHub", "detail": "acme/demo", "fix": "", "value": "WRITE"}]}
+    #: `deployctl access --json` for a teammate whose gh login lacks read:packages.
+    ACCESS = {"ok": True, "checks": [
+        {"id": "registry", "status": "optional", "title": "Registry login",
+         "detail": "none — only needed to deploy or list image tags from this machine; CI needs none",
+         "fix": "gh auth refresh -h github.com -s read:packages", "note": ""}]}
 
     @pytest.fixture
     def canned(self, monkeypatch):
-        answers = {("deploy", "status"): self.SERVER, ("ci", "doctor"): self.CI}
+        answers = {("deploy", "status"): self.SERVER, ("ci", "doctor"): self.CI, ("access", "--env"): self.ACCESS}
         monkeypatch.setattr(live, "CACHE", live.Cache(read=lambda argv: (answers[tuple(argv[:2])], "")))
 
     def test_a_teammate_sees_exactly_what_is_theirs_to_do(self, configured, canned, monkeypatch):
-        monkeypatch.setattr(live, "public_key", lambda: "ssh-ed25519 AAAAC3Nza teammate@laptop")
+        monkeypatch.setattr(access, "public_key", lambda: "ssh-ed25519 AAAAC3Nza teammate@laptop")
         card = configured.get(f"/live/access?env=production&t={T}").text
-        assert "Set it in Configure" in card, "no registry login on this machine yet"
-        assert "ssh-ed25519 AAAAC3Nza teammate@laptop" in card
-        assert "ssh deploy@203.0.113.10 &#39;cat &gt;&gt; ~/.ssh/authorized_keys&#39;" in card
+        assert "gh auth refresh -h github.com -s read:packages" in card, "how to get a registry login"
+        assert "Save a read:packages-only token instead" in card
+        assert "echo &#39;ssh-ed25519 AAAAC3Nza teammate@laptop&#39; | ssh deploy@203.0.113.10" in card, (
+            "the one line the owner runs, with the key in it"
+        )
         assert "write — deploy and roll back" in card
 
     def test_operate_shows_it_only_when_something_is_missing(self, configured, canned, monkeypatch):
         assert "Your access on this machine" in configured.get(f"/live/access-alert?env=production&t={T}").text
 
     def test_nothing_missing_means_nothing_on_operate(self, configured, monkeypatch):
+        """A registry login is optional: without one, Operate stays quiet."""
         ok_server = {**self.SERVER, "hosts": [{**self.SERVER["hosts"][0], "reachable": True, "access": "reachable"}]}
         answers = {("deploy", "status"): ok_server,
-                   ("ci", "doctor"): {"items": [{**self.CI["items"][0], "value": "ADMIN"}]}}
+                   ("ci", "doctor"): {"items": [{**self.CI["items"][0], "value": "ADMIN"}]},
+                   ("access", "--env"): self.ACCESS}
         monkeypatch.setattr(live, "CACHE", live.Cache(read=lambda argv: (answers[tuple(argv[:2])], "")))
-        paths.local_config().write_text("REGISTRY_USER=amal\nREGISTRY_TOKEN=ghp_mine\n")
         assert "Your access" not in configured.get(f"/live/access-alert?env=production&t={T}").text
 
     def test_the_stepper_sends_a_refused_key_to_your_access_not_to_the_bootstrap(self):

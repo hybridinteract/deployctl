@@ -18,18 +18,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
-from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from deployctl.cli import paths, registry, transfer
+from deployctl.cli import access, paths, registry, transfer
 
 from . import jobs, live, security, state
 from .actions import ACTIONS, ROW_ACTIONS, ParamError, available, board, ci_fix
 from .runner import run_capture, run_json, sse_run
+from .templating import templates
 from .terminal import open_native_terminal, term_result
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(paths.WEBUI_DIR / "templates"))
 
 _SSE = "text/event-stream"
 
@@ -47,8 +46,8 @@ LIVE_PARTS: dict[str, tuple[str, ...]] = {
     "runs": ("runs",),
     # Your access on this machine: the full card (Setup), and the same card only
     # when something is missing (top of Operate).
-    "access": ("server", "ci"),
-    "access-alert": ("server", "ci"),
+    "access": ("server", "ci", "access"),
+    "access-alert": ("server", "ci", "access"),
 }
 
 #: An upload larger than this is not a config export (they are a few kilobytes).
@@ -324,9 +323,13 @@ def live_part(request: Request, part: str, env: str, fresh: int = 0):
     if part == "journey":
         context["journey"] = live.journey(live.local_facts(cfg), facts["server"], facts["ci"])
     if part in ("access", "access-alert"):
-        context["access"] = live.access(live.local_facts(cfg), facts["server"], facts["ci"])
+        context["access"] = live.access(live.local_facts(cfg), facts["server"], facts["ci"], facts["access"])
         context["alert_only"] = part == "access-alert"
-        context["public_key"] = live.public_key()
+        key = access.public_key()
+        context["public_key"] = key
+        context["token_link"] = access.TOKEN_LINK
+        context["add_key"] = {host: access.add_key_command(key, cfg.raw.get("SSH_USER") or "deploy", host)
+                              for host in cfg.hosts} if key else {}
     if part in ("checklist", "history"):
         # Buttons render only for actions that apply here — the same list /run checks.
         context["usable"] = {a.id: a for a in available(cfg)}
@@ -348,7 +351,7 @@ def image_tags(env: str):
     if not repo:
         return HTMLResponse('<span class="hint err">IMAGE_REPO is not set — save the Image section first.</span>')
 
-    tags, error = registry.fetch_tags(repo, cfg.raw.get("REGISTRY_TOKEN", ""))
+    tags, error = registry.fetch_tags(repo, access.registry(cfg).token)
     if error:
         # Escaped: the message quotes IMAGE_REPO and registry-supplied text.
         return HTMLResponse(f'<span class="hint err">{html.escape(error)}</span>')

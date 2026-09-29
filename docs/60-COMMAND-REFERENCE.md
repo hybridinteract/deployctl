@@ -87,6 +87,46 @@ you the tool itself is intact.
 
 ---
 
+## Your access — once per person
+
+What each person sets up once, for every project on the machine: a GitHub login (`gh`), a
+registry login for pulling images, and an ssh key. None of it is part of a project's
+configuration: it is never exported, never uploaded, and CI needs none of it.
+
+A command that pulls the image on a host (`deploy doctor`, `init`, `update`, `rollback`,
+`migrate`) uses the first registry login it finds, in this order:
+
+1. `REGISTRY_USER`/`REGISTRY_TOKEN` in the environment — how CI passes its run's own token;
+2. `config/local.env` — a per-project override;
+3. `~/.deployctl/credentials.env` — a token saved with `access set-token`;
+4. your `gh` login — once it has the `read:packages` scope.
+
+3 and 4 are GitHub logins, so they apply only to images on `ghcr.io`. The hosts are logged
+out again after every pull, and on any exit — a failure or a cancel included.
+
+### `deployctl access show [--env E] [--json]`
+**Touches: local, and GitHub (read).** Checks your GitHub login, where your registry login
+comes from (and, for your `gh` login, that it has `read:packages`), and your ssh key — each
+missing one with the exact command that fixes it, and the one line a project's owner runs
+to let your key into a server. Inside a project it also shows your role on its repository.
+Plain `deployctl access`, with the same options, is the same command.
+
+A `gh` login can also write to your repositories, and during a pull it sits on the server.
+For production, a token with only `read:packages` is narrower: `access set-token`.
+
+### `deployctl access set-token [--json]`
+**Touches: local, and GitHub (read).** Saves a GitHub classic token with `read:packages` as
+your registry login for every project on this machine, in `~/.deployctl/credentials.env`
+(owner-only). The token is read from a hidden prompt or `$DEPLOYCTL_REGISTRY_TOKEN` — never
+from the command line — and checked with GitHub first: a fine-grained token (ghcr.io takes
+only classic ones), a rejected one, or one without `read:packages` is refused. Create one
+at `https://github.com/settings/tokens/new?scopes=read:packages`. `--json` for the panel.
+
+### `deployctl access forget-token`
+**Touches: local.** Deletes the saved token; your `gh` login is used again.
+
+---
+
 ## Inspection
 
 ### `deployctl envs`
@@ -438,7 +478,9 @@ See [50-WEBUI.md](50-WEBUI.md) for the panel itself and its safety model.
 | `ASSUME_YES=1` | Skip confirmation prompts. Set automatically by the CLI and the panel. (`backup restore` into the live database confirms in the CLI regardless — see above.) |
 | `DEPLOYCTL_ALLOW_SECRET_CHANGE=1` | What `--allow-secret-change` sets, for commands that have no flag for it. |
 | `IMAGE_TAG` | Overrides the configured tag for one invocation — how CI deploys what it just built. |
-| `REGISTRY_USER` / `REGISTRY_TOKEN` | Registry login for one invocation, over `config/local.env` — how CI logs the hosts in with its run's own `GITHUB_TOKEN`. `GHCR_USER`/`GHCR_TOKEN` are accepted aliases. |
+| `REGISTRY_USER` / `REGISTRY_TOKEN` | Registry login for one invocation, over every other source (see [Your access](#your-access--once-per-person)) — how CI logs the hosts in with its run's own `GITHUB_TOKEN`. `GHCR_USER`/`GHCR_TOKEN` are accepted aliases. |
+| `DEPLOYCTL_REGISTRY_TOKEN` | The token `access set-token` saves, instead of prompting — how the control panel passes it. |
+| `DEPLOYCTL_HOME` | Where deployctl keeps its own files (default `~/.deployctl`): saved token, config snapshots, database-dump copies. |
 | `NO_COLOR=1` | Disable ANSI colour. |
 
 Only keys already present in the merged configuration, plus the credential and tag keys
