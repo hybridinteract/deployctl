@@ -1,0 +1,6 @@
+{#- The project switcher, top right. Its list is fetched when it opens (/projects),
+    so a page never waits on it; each project's running tag after that, one by one. -#}
+<details class="switcher" id="switcher">
+  <summary class="iconbtn" title="Your other projects — each opens in its own panel">Projects ▾</summary>
+  <div class="switcher-menu" id="switcherMenu" aria-live="polite"><span class="hint">loading…</span></div>
+</details>

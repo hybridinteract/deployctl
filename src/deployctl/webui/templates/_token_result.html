@@ -1,0 +1,7 @@
+{#- What `deployctl access set-token` said. The token itself never comes back. -#}
+{% if error %}
+<span class="hint err">{{ error }}</span>
+{% else %}
+<span class="hint ok" data-saved="1">Saved — {{ login }}'s token is your registry login for every project on this machine.</span>
+{% for warning in warnings %}<span class="hint">{{ warning }}</span>{% endfor %}
+{% endif %}

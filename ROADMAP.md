@@ -30,9 +30,9 @@ whole config, so `ci sync-config` disappears.
 
 ### Add and remove a person's ssh key from the panel and CLI
 
-**Why.** A teammate's ssh key is added by hand today
-(`ssh deploy@host 'cat >> ~/.ssh/authorized_keys' < key.pub`), on every host, and removed by
-hand when they leave. The panel's *Your access* card already shows the key that needs adding.
+**Why.** A teammate's ssh key is added by hand today, on every host, and removed by hand when
+they leave. Since 0.14 *Your access* (and `deployctl access`) prints the exact line the owner
+runs, with the key in it — but the owner still runs it once per host.
 `deployctl server keys` / `add-key` / `remove-key` would list, add (every host, the jump host,
 proven like `ci setup-key` proves the CI key) and remove them — the human counterpart of
 `ci setup-key`.
@@ -57,6 +57,22 @@ again.
 ### Test client deprecation
 Every panel test run warns *"Using `httpx` with `starlette.testclient` is deprecated; install
 `httpx2` instead."* Move the dev dependency before a Starlette release removes the old path.
+
+### A narrower default for host pulls
+Since 0.14 a laptop deploy pulls with the person's `gh` login when no read:packages token is
+saved. The host holds it only for the pull, and is logged out on any exit. But that token can
+also write to every repository the person can. `deployctl access` and the panel say so, and
+`access set-token` is the narrower choice. Options to make narrow the default:
+- mint a short-lived pull token per deploy, through a GitHub App installed on the
+  organisation;
+- or pull on the laptop and stream the image to the hosts (`docker save | ssh … docker load`),
+  so no registry credential ever reaches a server.
+
+### Panels left running across an upgrade
+A panel started with `--detach` (or by the switcher) keeps running the version it was started
+with after `uv tool install --force`, until it is stopped. `/healthz` reports its version:
+`webui` and the switcher could restart one that is older than the installed tool, when it
+has no job running.
 
 ### Registries other than ghcr.io in the tag picker
 "Recent tags from the registry" lists tags only for ghcr.io (`cli/registry.py`). Other

@@ -34,14 +34,11 @@ BASE_DOMAIN=example.com
 IMAGE_REPO=ghcr.io/your-org/myapp
 ```
 
-`deploy/config/local.env` — **yours, on this machine only**: your registry login, used when
-you deploy from here and to list image tags. Never exported, never uploaded to GitHub; CI
-logs in with its own token, and everyone who deploys keeps their own:
-
-```sh
-REGISTRY_USER=your-github-user
-REGISTRY_TOKEN=ghp_…            # classic PAT, read:packages only
-```
+Your registry login — used when you deploy from here, and to list image tags — is not in
+these files. It is your `gh` login with `read:packages`, or a read:packages-only token saved
+once for every project; `deployctl access` says which, and how to get one. CI logs in with
+its own token, and everyone who deploys keeps their own. (`deploy/config/local.env` can
+override it for this one project — never exported, never uploaded.)
 
 `deploy/config/production.env`:
 

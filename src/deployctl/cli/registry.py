@@ -7,7 +7,7 @@ other registries fall back to "enter the tag by hand", which costs nothing since
 the tag is usually a git sha you already know.
 
 Shared by the CLI (``deployctl image tags``) and the control panel's tag picker,
-so the token is read from configuration in one place and never leaves the machine.
+so the token is resolved in one place (cli/access.py) and never leaves the machine.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def fetch_tags(image_repo: str, token: str, limit: int = 10) -> tuple[list[Tag],
     if provider(image_repo) != "ghcr":
         return [], f"listing tags is only implemented for ghcr.io (got {image_repo!r}) — pass --tag explicitly"
     if not token:
-        return [], "REGISTRY_TOKEN is not set — add it to config/common.env"
+        return [], "no registry login on this machine — see: deployctl access"
 
     path = image_repo.removeprefix("https://").removeprefix("ghcr.io/")
     parts = path.split("/", 1)

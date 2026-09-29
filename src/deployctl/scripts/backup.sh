@@ -46,7 +46,7 @@ readonly BACKUP_DIR="${REMOTE_DIR}/backups"
 # set -u would abort on it), while bash resolves a bare ~ from the passwd entry.
 # It must stay outside quotes — "~" is never expanded.
 _home=~
-readonly LOCAL_DIR="${DEPLOYCTL_BACKUP_DIR:-${_home}/.deployctl/backups/${COMPOSE_PROJECT}/${DEPLOYCTL_ENV}}"
+readonly LOCAL_DIR="${DEPLOYCTL_BACKUP_DIR:-${DEPLOYCTL_HOME:-${_home}/.deployctl}/backups/${COMPOSE_PROJECT}/${DEPLOYCTL_ENV}}"
 readonly KEEP="${BACKUP_KEEP:-7}"
 readonly FETCH="${BACKUP_FETCH:-true}"
 # Must be at least the server's major version: pg_dump refuses to dump a newer

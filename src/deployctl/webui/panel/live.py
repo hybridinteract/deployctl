@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
-import pathlib
 import threading
 import time
 from typing import Any, Callable
@@ -36,6 +35,7 @@ SOURCES: dict[str, tuple[str, ...]] = {
     "history": ("deploy", "history", "--env", "{env}", "--json"),
     "ci": ("ci", "doctor", "--env", "{env}", "--json"),
     "runs": ("ci", "runs", "--env", "{env}", "--json", "--limit", "8"),
+    "access": ("access", "--env", "{env}", "--json"),
 }
 
 
@@ -101,7 +101,6 @@ def local_facts(cfg: Config) -> dict:
         "workflows": (paths.REPO_ROOT / ".github" / "workflows" / "deploy.yml").is_file(),
         "ci_scope": bool(cfg.raw.get("CI_SCOPE")),
         "branch": cfg.raw.get("DEPLOY_BRANCH") or "main",
-        "registry_login": bool(cfg.raw.get("REGISTRY_USER") and cfg.raw.get("REGISTRY_TOKEN")),
         "ssh_user": cfg.raw.get("SSH_USER") or "deploy",
     }
 
@@ -248,32 +247,25 @@ def ci_item(ci: Fact | None, key: str) -> dict | None:
 
 # ---- your access on this machine ----------------------------------------------------
 
-#: The public keys ssh offers by default, most modern first.
-_PUBLIC_KEYS = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
 
-
-def public_key() -> str:
-    """This machine's public ssh key — what to send to whoever runs the project. Not a secret."""
-    for name in _PUBLIC_KEYS:
-        path = pathlib.Path.home() / ".ssh" / name
-        if path.is_file():
-            return path.read_text().strip()
-    return ""
-
-
-def access(local: dict, server: Fact | None, ci: Fact | None) -> dict:
+def access(local: dict, server: Fact | None, ci: Fact | None, mine: Fact | None = None) -> dict:
     """What this machine still needs that no shared config can give it.
 
     ``{"rows": [...], "missing": bool}``; each row ``{id, status, title, detail}``
-    with status ok | todo | fail | unknown. The three are exactly what an import
-    leaves to the person: their registry login, their ssh key on the servers, and
-    their GitHub login.
+    with status ok | todo | fail | optional | unknown. The three are exactly what an
+    import leaves to the person: their registry login (``mine``, from ``deployctl
+    access``), their ssh key on the servers, and their GitHub login. The registry
+    login is optional — only deploying from this machine needs it — so it never
+    raises the alert on Operate.
     """
     rows = []
-    registry = local.get("registry_login")
-    rows.append({"id": "registry", "status": "ok" if registry else "todo", "title": "Your registry login",
-                 "detail": "set on this machine (config/local.env)" if registry
-                 else "not set on this machine — deploying from here and listing tags need it"})
+    checks = {row["id"]: row for row in mine.data.get("checks", [])} if mine and mine.ok else {}
+    registry = checks.get("registry")
+    if registry is None:
+        rows.append({"id": "registry", "status": "unknown", "title": "Your registry login",
+                     "detail": mine.error if mine and not mine.ok else "not checked yet"})
+    else:
+        rows.append({**registry, "title": "Your registry login"})
 
     if not (server and server.ok):
         rows.append({"id": "ssh", "status": "unknown", "title": "Your ssh access to the servers",

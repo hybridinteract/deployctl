@@ -1,0 +1,15 @@
+{#- What Add project or New project did. data-open-name makes panel.js open that
+    project's panel straight away. -#}
+{% from "_macros.html" import codeblock %}
+{% if error %}
+<p class="hint err">{{ error }}</p>
+{% elif copied_in %}
+<div class="callout warn">
+  <p><b>{{ copied_in }}</b> carries a copy of deployctl. Move it onto the installed tool first — in a
+    terminal, where the change can be reviewed with <code>git status</code>: the plan, then the move.</p>
+  {% for command in commands %}{{ codeblock('adopt-' ~ loop.index, command) }}{% endfor %}
+  <p class="hint">Then commit it — it is added to this machine's list as it moves.</p>
+</div>
+{% elif open %}
+<p class="hint ok" data-open-name="{{ open }}">{{ 'Created' if created else 'Added' }} {{ open }} — opening its panel…</p>
+{% endif %}

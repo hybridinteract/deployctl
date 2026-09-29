@@ -23,82 +23,72 @@ pulled from a registry.
 
 ## Start here
 
-Four steps. After the last one, everything happens in the browser. For the same path with
-every detail spelled out, plus a troubleshooting table:
-**[docs/05-QUICKSTART.md](docs/05-QUICKSTART.md)**.
-
-### 1 · Install the tool
+Once per machine — the only setup that is yours rather than a project's:
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0
-deployctl --version
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0
+gh auth login                                     # your GitHub login: one setup for every project
+gh auth refresh -h github.com -s read:packages    # so it can pull images when you deploy from here
+deployctl access                                  # what you have, what is missing, how to fix it
 ```
 
-Once per machine. It puts `deployctl` on your PATH with its own isolated Python
-environment — nothing is added to your application's dependencies. The machine also needs
-`ssh`, `rsync` and (for `validate`'s compose check) `docker`. Upgrade by installing a newer
-tag with `--force`.
+`uv tool install` puts `deployctl` on your PATH with its own isolated Python: nothing is
+added to your application's dependencies. The machine also needs `ssh`, `rsync`, the GitHub
+CLI (`gh`) and, for `validate`'s compose check, `docker`. Upgrade by installing a newer tag
+with `--force`.
 
-### 2 · Create an environment
-
-From the root of your application's repository:
+Then open the control panel:
 
 ```bash
-deployctl init --mode single --env production
+deployctl webui
 ```
 
-That creates `deploy/` — your project's own part: `project/` (committed), `config/` and
-`generated/` (gitignored, with the `.gitignore` written first). `deployctl` finds it from
-anywhere inside the repository, the way git finds `.git`.
+Inside an application's repository it opens that project's panel. Anywhere else it opens
+the **home panel**: your projects, and **Add project**. Each project has a panel of its own,
+on a port of its own, and the **Projects ▾** switcher, top right, moves between them. The
+panel binds to 127.0.0.1 only and has no login: it drives your SSH keys, so never expose the
+port.
 
-Pick the shape that matches your infrastructure — you can change it later:
+### Three ways in
 
-- **`--mode single`** — one server. The app, Postgres and Redis all run there as
-  containers, with a free Let's Encrypt certificate. Good for staging, internal tools, and
-  production for anything that does not yet need horizontal scale.
-- **`--mode cluster`** — several servers behind a load balancer, with managed Postgres and
-  Redis. Survives a host failing, and keeps the site up through a release: hosts restart
-  one at a time while the others serve. (Not strictly zero-error — see
-  [20-CLUSTER.md §6](docs/20-CLUSTER.md#6-rolling-updates).)
+**A new project — its first deployment.**
+1. **Add project**, then the repository's path.
+2. Fill in the **New project** form: the shape, domain, image, servers, and how your app
+   runs.
+3. It opens on **Setup**:
+   - prepare the server — the one terminal step, a root script run on it;
+   - the first deploy;
+   - then **CI/CD**, so every merge deploys.
 
-`--env` names the environment and is just a label — `production`, `staging`, `demo`,
-whatever fits. Run `init` again with a different `--env` to add more.
+Every step, in detail: [docs/15-FIRST-DEPLOYMENT.md](docs/15-FIRST-DEPLOYMENT.md).
 
-This step comes before the panel because the panel *edits* configuration; it does not
-scaffold it, and it will refuse to start until at least one environment exists.
+**Join a project someone already deploys.** Three things are yours: `gh` logged in, access
+to the repository, and your ssh key on its servers.
+1. Clone the repository.
+2. **Add project** with the clone's path (or run `deployctl webui` inside it). It opens on
+   **Import**.
+3. Import the file someone exported, with its passphrase.
+4. **Your access on this machine**, on Setup, says what is left — including the one line
+   the project's owner runs to let your key in.
 
-### 3 · Tell it how to run your app
+**Upgrade a project with deployctl copied into it.** A repository from before the tool was
+packaged has a `deployctl/` directory holding the tool's code.
+1. `deployctl adopt` shows the plan.
+2. `deployctl adopt --apply` moves the project's files to `deploy/` and removes the copy.
+3. Review with `git status`, and commit.
 
-```bash
-$EDITOR deploy/project/project.env
-```
+See [docs/40-ADOPTING-A-NEW-PROJECT.md](docs/40-ADOPTING-A-NEW-PROJECT.md).
 
-The one file the panel does not manage — the contract describing *your* application: the
-module gunicorn serves, the health endpoint, the migration command, and how the image is
-built. Every field is commented, and
-[docs/40-ADOPTING-A-NEW-PROJECT.md](docs/40-ADOPTING-A-NEW-PROJECT.md) walks through each
-one. You edit this once per project.
-
-### 4 · Open the control panel
-
-```bash
-deployctl webui                     # → http://127.0.0.1:8765
-```
-
-Ctrl+C stops it. If the port is already taken — usually a panel you started earlier and
-have since lost the terminal for — `--stop` ends it, `--restart` replaces it, and
-`--port 8790` runs alongside. It binds to 127.0.0.1 only and has no authentication: it
-drives your SSH keys, so never expose the port.
-
-> A repository that still has deployctl's code copied into a `deployctl/` directory keeps
-> working — the tool finds it — and `deployctl adopt` moves it to the layout above.
+The whole path, step by step, with a troubleshooting table:
+**[docs/05-QUICKSTART.md](docs/05-QUICKSTART.md)** — *Getting started*.
 
 ---
 
 ## Then, in the browser
 
-The panel follows the project's journey — **Server → First deploy → CI/CD → Live** — and
-the stepper under the top bar always names the next step.
+Each project's panel follows its journey — **Server → First deploy → CI/CD → Live** — and
+the stepper under the top bar always names the next step. **Projects ▾**, top right, switches
+to another project's panel; the one you leave keeps running, with its jobs.
 
 **Setup** *(once per server)* — the root script that prepares a fresh server, rendered with
 this environment's values; the configuration still missing; then the first deploy as a
@@ -131,7 +121,8 @@ Everything above is a command. Use these for scripting, CI, or when you want the
 invocation in your shell history:
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0   # once per machine
+gh auth login && deployctl access       # once per machine: your GitHub login, checked
 deployctl init --mode single            # or --mode cluster; creates deploy/
 $EDITOR deploy/config/common.env          # project name, domain, image repo
 $EDITOR deploy/config/production.env      # hosts, database, TLS
@@ -193,7 +184,9 @@ and production with `cluster` is just the common case, not a rule.
 
 | | |
 |---|---|
-| `init --mode single\|cluster` | scaffold `config/` + `project/` |
+| `access` / `access set-token` | your GitHub login, registry login and ssh key — the one setup per person |
+| `projects list\|add\|remove` | the projects on this machine, each with its panel's port |
+| `init --mode single\|cluster [--set K=V]` | scaffold `config/` + `project/`, optionally filled in |
 | `setup --env E [--force] [--rotate-secrets]` | render `generated/` |
 | `validate --env E` | lint configuration and artifacts (0 ok / 1 error / 2 warnings) |
 | `selftest` | render every supported shape and assert the output — no servers needed |
@@ -208,7 +201,7 @@ and production with `cluster` is just the common case, not a rule.
 | `deploy doctor --fix` | repair the permission problems that do not need root |
 | `ssl setup\|renew\|check` | Let's Encrypt (single host only) |
 | `backup run\|list\|restore` | Postgres dumps, executed on the host |
-| `webui` | the control panel, 127.0.0.1 only |
+| `webui [--detach]` | the control panel, 127.0.0.1 only — this project's, or the home panel |
 
 Add `--dry-run` to any deploy command to print every ssh/rsync/compose command it
 would run, without touching a host.
@@ -239,12 +232,21 @@ your-app/deploy (one per application repository — found from anywhere inside i
 │   ├── compose.extra.yml      optional extra services
 │   └── nginx.extra.conf       optional extra location blocks
 ├── config/                YOUR configuration and secrets — gitignored; back it up
-│   ├── common.env             shared: project, domain, registry
+│   ├── common.env             shared: project, domain, image
 │   ├── <env>.env              per environment: hosts, TLS, databases
 │   ├── app.<env>.env          your app's keys, as set in the panel
-│   └── secrets.<env>.env      generated once, reused forever
+│   ├── secrets.<env>.env      generated once, reused forever
+│   ├── local.env              optional: this machine's registry login for this project
+│   └── exports/  imports/     `config export` / `import` files (ignored by git)
 └── generated/<env>/       rendered artifacts — mirrors REMOTE_DIR on that env's hosts;
                            rebuilt from config/ on every deploy, safe to delete
+
+~/.deployctl (yours, on this machine — folders 0700, files 0600; $DEPLOYCTL_HOME moves it)
+├── projects.json              the projects on this machine, and each panel's port
+├── credentials.env            a saved read:packages token (`access set-token`), if any
+├── config-backups/            config/ snapshots taken before a Save, an import or a migration
+├── backups/                   database dumps fetched from the hosts
+└── logs/                      panels started in the background (`webui --detach`)
 ```
 
 `deployctl` finds the deploy directory from `--project-dir`, then `$DEPLOYCTL_PROJECT`, then
@@ -259,17 +261,18 @@ can drift between the CLI and the panel.
 
 ## Documentation
 
-**Start with [05-QUICKSTART.md](docs/05-QUICKSTART.md)** — setup to first deploy, with a
-troubleshooting table. The rest is depth to come back for:
+**Start with [05-QUICKSTART.md](docs/05-QUICKSTART.md)** — *Getting started*: install, your
+access, the panel, adding a project, the first deployment, CI/CD, and day to day. Then:
 
-1. **[00-CONCEPTS.md](docs/00-CONCEPTS.md)** — the model, and why each piece exists. Read once.
-2. **[10-SINGLE-SERVER.md](docs/10-SINGLE-SERVER.md)** — one server, start to finish.
-3. **[20-CLUSTER.md](docs/20-CLUSTER.md)** — N servers behind a load balancer.
-4. **[30-OPERATIONS.md](docs/30-OPERATIONS.md)** — day two: rolling updates (what to edit, in what order), rollback, backups, `/docs` auth, troubleshooting.
+1. **[15-FIRST-DEPLOYMENT.md](docs/15-FIRST-DEPLOYMENT.md)** — the first deployment in detail: the checklist, every step, what success looks like, what to do when it fails.
+2. **[00-CONCEPTS.md](docs/00-CONCEPTS.md)** — the model, and why each piece exists. Read once.
+3. **[10-SINGLE-SERVER.md](docs/10-SINGLE-SERVER.md)** — one server, start to finish.
+4. **[20-CLUSTER.md](docs/20-CLUSTER.md)** — N servers behind a load balancer.
+5. **[30-OPERATIONS.md](docs/30-OPERATIONS.md)** — day two: rolling updates (what to edit, in what order), rollback, backups, `/docs` auth, troubleshooting.
    **[35-CONTINUOUS-DEPLOYMENT.md](docs/35-CONTINUOUS-DEPLOYMENT.md)** — deploy on merge from GitHub Actions: keys, the config secret, rollback.
-5. **[40-ADOPTING-A-NEW-PROJECT.md](docs/40-ADOPTING-A-NEW-PROJECT.md)** — setting up a new repository, or moving one off a copied-in deployctl.
-6. **[50-WEBUI.md](docs/50-WEBUI.md)** — the control panel, its tabs, and its safety model.
-7. **[60-COMMAND-REFERENCE.md](docs/60-COMMAND-REFERENCE.md)** — every command and flag, checked against the CLI by a test.
+6. **[40-ADOPTING-A-NEW-PROJECT.md](docs/40-ADOPTING-A-NEW-PROJECT.md)** — the app contract, a new repository, or moving one off a copied-in deployctl.
+7. **[50-WEBUI.md](docs/50-WEBUI.md)** — the control panel: projects and the switcher, its tabs, and its safety model.
+8. **[60-COMMAND-REFERENCE.md](docs/60-COMMAND-REFERENCE.md)** — every command and flag, checked against the CLI by a test.
 
 ## Working on deployctl
 
@@ -277,6 +280,8 @@ troubleshooting table. The rest is depth to come back for:
 git clone git@github.com:hybridinteract/deployctl.git && cd deployctl
 uv sync                                  # the tool, editable, plus pytest
 uv run pytest                            # engine, CLI, panel and docs tests
+uv run playwright install chromium       # once, for the browser tests:
+uv run pytest -m e2e                     #   the panel driven in Chromium
 uv run deployctl --project-dir ~/code/some-app/deploy validate --env staging
 ```
 
