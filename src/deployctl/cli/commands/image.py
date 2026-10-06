@@ -7,7 +7,7 @@ import subprocess
 
 import typer
 
-from .. import paths, registry, runner, tags, ui
+from .. import access, paths, registry, runner, tags, ui
 from ..config import Config
 from ..context import env_option, load_config
 
@@ -99,7 +99,8 @@ def push(
             runner.run_local(["docker", "push", ref])
         except subprocess.CalledProcessError as exc:
             ui.error("push failed")
-            ui.hint("check REGISTRY_USER/REGISTRY_TOKEN (the token needs write:packages to push)")
+            ui.hint("pushing needs write:packages: gh auth refresh -h github.com -s write:packages, "
+                    "or a token with it in config/local.env")
             raise typer.Exit(exc.returncode) from exc
         ui.ok(f"pushed {ref}")
 
@@ -147,15 +148,15 @@ def _verify_architecture(reference: str, platform: str) -> None:
 
 
 def _login(cfg: Config) -> None:
-    user, token = cfg.raw["REGISTRY_USER"], cfg.raw["REGISTRY_TOKEN"]
+    creds = access.registry(cfg)
     host = cfg.derived["REGISTRY_HOST"]
-    if not (user and token and host):
-        ui.warn("REGISTRY_USER/REGISTRY_TOKEN not set — assuming this machine is already logged in")
+    if not (creds and host):
+        ui.warn("no registry login (deployctl access) — assuming this machine's docker is already logged in")
         return
-    ui.info(f"docker login {host}")
+    ui.info(f"docker login {host}  ({creds.source})")
     proc = subprocess.run(
-        ["docker", "login", host, "-u", user, "--password-stdin"],
-        input=token,
+        ["docker", "login", host, "-u", creds.user, "--password-stdin"],
+        input=creds.token,
         capture_output=True,
         text=True,
     )
@@ -171,7 +172,7 @@ def tags(
 ) -> None:
     """List recent image tags in the registry, newest first."""
     cfg = load_config(env, require_valid=False)
-    found, error = registry.fetch_tags(cfg.raw["IMAGE_REPO"], cfg.raw["REGISTRY_TOKEN"], limit=limit)
+    found, error = registry.fetch_tags(cfg.raw["IMAGE_REPO"], access.registry(cfg).token, limit=limit)
     if error:
         ui.error(error)
         raise typer.Exit(1)

@@ -18,8 +18,8 @@ help = "single: one server, Let's Encrypt on the host, containerized Postgres/Re
 
 [[section]]
 id = "registry"
-title = "Your registry access — this machine only"
-description = "Your own GitHub login for pulling the image when you deploy from this machine, and for listing tags. Saved in config/local.env: never exported, never uploaded to GitHub — CI logs in with its own token, and each person who deploys sets theirs."
+title = "Registry login for this project — optional"
+description = "Usually leave this empty: your gh login (with read:packages) or a token saved once with `deployctl access set-token` covers every project on this machine. Set it here only to use a different login for THIS project, or for a registry other than ghcr.io. Saved in config/local.env: yours, never exported, never uploaded — CI logs in with its own token."
 
 [[section.field]]
 key = "REGISTRY_USER"
@@ -47,7 +47,7 @@ steps = [
   "Tick read:packages and nothing else. The servers only ever pull.",
   "Generate, then copy it straight away — GitHub shows the value once.",
   "If the organisation uses SSO: on the token's row, Configure SSO → Authorize. Skipping this is why a token that looks right fails on the host, mid-deploy.",
-  "Paste it here and press Save. It is stored in config/local.env — yours, on this machine only — and never sent back to this page.",
+  "Paste it here and press Save. It is stored in config/local.env — yours, for this project only — and never sent back to this page. For every project at once, use Your access on the Setup tab (deployctl access set-token) instead.",
 ]
 note = "Pushing from this machine (`deployctl image push`) also needs write:packages. CI needs no token at all: its workflows build and deploy with the run's own GITHUB_TOKEN."
 

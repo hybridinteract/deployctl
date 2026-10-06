@@ -7,7 +7,7 @@ import subprocess
 
 import typer
 
-from .. import locks, render, secrets, tags, ui
+from .. import access, locks, render, secrets, tags, ui
 from ..config import Config
 from ..context import env_option, exclusive, load_config, resolve_env
 from ..runner import run
@@ -67,10 +67,29 @@ def _prepare(env: str | None, tag: str | None = None) -> Config:
     return cfg
 
 
+#: Engine commands that pull the image on a host, and so log it in to the registry.
+#: Only these resolve a registry login: status, which the panel reads every few
+#: seconds, must not ask gh for a token each time.
+_PULLS = frozenset({"doctor", "init", "update", "rollback", "roll-one", "migrate"})
+
+
+def _registry_env(cfg: Config) -> dict[str, str]:
+    """The hosts' registry login for this run (cli/access.py), and where it came from."""
+    creds = access.registry(cfg)
+    if creds:
+        ui.info(f"registry login: {creds.source}")
+        if creds.from_gh:
+            ui.hint("the hosts log in with your gh token for the pull — a read:packages-only token is "
+                    "narrower: deployctl access set-token")
+    return creds.env()
+
+
 def _engine(
     cfg: Config, command: str, *args: str, dry_run: bool = False, allow_secret_change: bool = False
 ) -> None:
     extra = {"PINNED_SECRETS": " ".join(secrets.pinned(cfg))}
+    if command in _PULLS:
+        extra |= _registry_env(cfg)
     if allow_secret_change:
         extra["DEPLOYCTL_ALLOW_SECRET_CHANGE"] = "1"
     try:

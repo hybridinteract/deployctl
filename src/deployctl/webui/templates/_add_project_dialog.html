@@ -1,0 +1,29 @@
+{#-
+  Add project: the path to a repository on this machine. What is there decides
+  what comes next — a project opens; a teammate's clone opens on Import; a
+  repository without one gets the New project form; a copied-in deployctl gets the
+  commands that move it onto the installed tool.
+-#}
+<dialog class="guide add-project-dialog" id="addProjectDialog" aria-labelledby="addProjectTitle">
+  <div class="guide-body">
+    <div class="guide-head">
+      <h3 id="addProjectTitle">Add a project</h3>
+      <button type="button" class="guide-x" data-act="guide-close" aria-label="Close">×</button>
+    </div>
+    <p class="guide-note first">The application's repository — a clone on this machine. A project there
+      opens in its own panel; a teammate's clone opens on <b>Import</b>; a repository without one gets
+      the <b>New project</b> form.</p>
+    <form id="addProjectForm" class="import-form" method="post">
+      <label class="field">
+        <span>Repository path</span>
+        <input type="text" name="path" value="{{ add or '' }}" placeholder="/Users/you/code/app"
+               spellcheck="false" autocomplete="off" required>
+      </label>
+      <div class="import-actions">
+        <button type="button" class="btn" data-act="project-add">Continue</button>
+        <button type="button" class="btn ghost" data-act="guide-close">Cancel</button>
+      </div>
+    </form>
+    <div id="addProjectResult" aria-live="polite"></div>
+  </div>
+</dialog>

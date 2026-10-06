@@ -36,10 +36,19 @@ Two options go before the command, and apply to all of them:
 
 ## Setup
 
-### `deployctl init --mode single|cluster [--env NAME]`
+### `deployctl init --mode single|cluster [--env NAME] [--set KEY=VALUE]…`
 **Touches: local.** Scaffolds `config/` and `project/` for a new environment. `--mode`
 picks the deployment shape; `--env` names the environment (default `production`). Run it
-again with a different `--env` to add another. Does not overwrite an existing config.
+again with a different `--env` to add another. Does not overwrite an existing config. In a
+git repository it also puts the project on this machine's list (`projects list`).
+
+`--set KEY=VALUE` (repeatable) fills a value in as the stubs are created — how the control
+panel's New project form works. The keys: `PROJECT_NAME`, `BASE_DOMAIN`, `IMAGE_REPO`
+(lowercase) into `config/common.env`; `API_SUBDOMAIN`, `HOSTS`, `SSH_USER`, `ACME_EMAIL` into
+`config/<env>.env`; `APP_MODULE`, `APP_PORT`, `HEALTH_PATH`, `MIGRATE_CMD`, `CELERY_APP`,
+`WITH_BEAT`, `DOCKERFILE`, `BUILD_CONTEXT`, `BUILD_TARGET` into `project/project.env`. Never a
+secret — passwords go in through Configure — and refused, before anything is written, for a
+file that already exists.
 
 ### `deployctl setup --env E [--tag T] [--force] [--rotate-secrets]`
 **Touches: local.** Renders `generated/<env>/` — the compose files, nginx config, env file
@@ -84,6 +93,46 @@ Prints the plan unless `--apply` is given — never a token's value. `--apply` s
 **Touches: local.** Renders every supported deployment shape into a temporary directory and
 asserts the output. Needs no configuration and no servers — this is the command that tells
 you the tool itself is intact.
+
+---
+
+## Your access — once per person
+
+What each person sets up once, for every project on the machine: a GitHub login (`gh`), a
+registry login for pulling images, and an ssh key. None of it is part of a project's
+configuration: it is never exported, never uploaded, and CI needs none of it.
+
+A command that pulls the image on a host (`deploy doctor`, `init`, `update`, `rollback`,
+`migrate`) uses the first registry login it finds, in this order:
+
+1. `REGISTRY_USER`/`REGISTRY_TOKEN` in the environment — how CI passes its run's own token;
+2. `config/local.env` — a per-project override;
+3. `~/.deployctl/credentials.env` — a token saved with `access set-token`;
+4. your `gh` login — once it has the `read:packages` scope.
+
+3 and 4 are GitHub logins, so they apply only to images on `ghcr.io`. The hosts are logged
+out again after every pull, and on any exit — a failure or a cancel included.
+
+### `deployctl access show [--env E] [--json]`
+**Touches: local, and GitHub (read).** Checks your GitHub login, where your registry login
+comes from (and, for your `gh` login, that it has `read:packages`), and your ssh key — each
+missing one with the exact command that fixes it, and the one line a project's owner runs
+to let your key into a server. Inside a project it also shows your role on its repository.
+Plain `deployctl access`, with the same options, is the same command.
+
+A `gh` login can also write to your repositories, and during a pull it sits on the server.
+For production, a token with only `read:packages` is narrower: `access set-token`.
+
+### `deployctl access set-token [--json]`
+**Touches: local, and GitHub (read).** Saves a GitHub classic token with `read:packages` as
+your registry login for every project on this machine, in `~/.deployctl/credentials.env`
+(owner-only). The token is read from a hidden prompt or `$DEPLOYCTL_REGISTRY_TOKEN` — never
+from the command line — and checked with GitHub first: a fine-grained token (ghcr.io takes
+only classic ones), a rejected one, or one without `read:packages` is refused. Create one
+at `https://github.com/settings/tokens/new?scopes=read:packages`. `--json` for the panel.
+
+### `deployctl access forget-token`
+**Touches: local.** Deletes the saved token; your `gh` login is used again.
 
 ---
 
@@ -416,15 +465,39 @@ database name, or takes `--yes`.
 
 ## The control panel
 
-### `deployctl webui [--port P] [--stop] [--restart] [--reload]`
-**Touches: local.** Serves the control panel on `127.0.0.1` — the host is not
-configurable. Refuses to start without at least one configured environment.
+### `deployctl webui [--port P] [--detach] [--no-browser] [--json] [--stop] [--restart] [--reload]`
+**Touches: local.** Opens this project's control panel on `127.0.0.1` — the host is not
+configurable — and puts the project on this machine's list if it is not there yet. Each
+project has a port of its own, given once and kept (see `projects list`); outside a project
+it opens the **home panel** on 8765: your projects, and Add project. Run in a repository
+that has no deployctl project yet, the home panel opens with Add project filled in for it.
 
-`--stop` ends a panel already serving that port; `--restart` replaces it; `--reload`
-auto-reloads while editing the panel's own code. If the port is busy, the command names the
-process holding it rather than leaving you with a bare bind error.
+A panel already running for this project is reused, never started twice — and `--port`
+is refused while it runs, since two panels on one project would each think they alone run
+its jobs. If the port is held by anything else, the command names what holds it.
+
+`--detach` starts the panel in the background (its log in `~/.deployctl/logs/`) and returns
+once it answers — how the switcher opens another project. The browser opens by itself on a
+desktop, never over ssh; `--no-browser` stops it. `--json` prints `{url, port, root}`.
+`--stop` ends this project's panel (only ever a deployctl panel), `--restart` replaces it,
+and `--reload` auto-reloads while editing the panel's own code.
 
 See [50-WEBUI.md](50-WEBUI.md) for the panel itself and its safety model.
+
+### `deployctl projects list [--json]`
+**Touches: local.** The projects on this machine (`~/.deployctl/projects.json`): name,
+panel port, whether that panel is running, and where the repository is.
+
+### `deployctl projects add [PATH] [--name N] [--port P] [--json]`
+**Touches: local.** Puts the project in the repository at `PATH` (default: here) on the
+list, or changes its name or port. It gets the next free port from 8766 unless `--port`
+gives one. A repository without a deployctl project is refused, saying what to do instead:
+start one (`init`), or `adopt` a copied-in deployctl first. `init`, `adopt --apply` and
+`webui` add their project by themselves.
+
+### `deployctl projects remove NAME`
+**Touches: local.** Takes a project off the list; nothing in it is touched. Refused while
+its panel is running.
 
 ---
 
@@ -438,7 +511,9 @@ See [50-WEBUI.md](50-WEBUI.md) for the panel itself and its safety model.
 | `ASSUME_YES=1` | Skip confirmation prompts. Set automatically by the CLI and the panel. (`backup restore` into the live database confirms in the CLI regardless — see above.) |
 | `DEPLOYCTL_ALLOW_SECRET_CHANGE=1` | What `--allow-secret-change` sets, for commands that have no flag for it. |
 | `IMAGE_TAG` | Overrides the configured tag for one invocation — how CI deploys what it just built. |
-| `REGISTRY_USER` / `REGISTRY_TOKEN` | Registry login for one invocation, over `config/local.env` — how CI logs the hosts in with its run's own `GITHUB_TOKEN`. `GHCR_USER`/`GHCR_TOKEN` are accepted aliases. |
+| `REGISTRY_USER` / `REGISTRY_TOKEN` | Registry login for one invocation, over every other source (see [Your access](#your-access--once-per-person)) — how CI logs the hosts in with its run's own `GITHUB_TOKEN`. `GHCR_USER`/`GHCR_TOKEN` are accepted aliases. |
+| `DEPLOYCTL_REGISTRY_TOKEN` | The token `access set-token` saves, instead of prompting — how the control panel passes it. |
+| `DEPLOYCTL_HOME` | Where deployctl keeps its own files (default `~/.deployctl`): saved token, config snapshots, database-dump copies. |
 | `NO_COLOR=1` | Disable ANSI colour. |
 
 Only keys already present in the merged configuration, plus the credential and tag keys

@@ -8,7 +8,7 @@
 #   HOSTS PRIMARY_HOST SSH_USER REMOTE_DIR
 #   COMPOSE_PROJECT CONTAINER_PREFIX
 #   IMAGE_REF WORKER_IMAGE_REF IMAGE_TAG IMAGE_PLATFORM
-#   REGISTRY_HOST REGISTRY_USER REGISTRY_TOKEN
+#   REGISTRY_HOST REGISTRY_USER REGISTRY_TOKEN  (only for commands that pull — cli/access.py)
 #   API_DOMAIN HEALTH_PATH HEALTH_PROBE_CMD MIGRATE_CMD
 #   TLS_LE TLS_LB TLS_NONE WITH_REDIS WITH_EXTRA_COMPOSE   (all "true"/"false")
 #
@@ -230,13 +230,41 @@ remote_permission_report() {
     " 2>/dev/null || true
 }
 
+# The hosts this run has logged in to the registry, space-delimited on both sides
+# (" a b ") so one address never matches inside another. engine_cleanup logs each
+# out again however the run ends.
+REGISTRY_LOGGED_IN=" "
+
+# Everything a run must undo however it ends — an error, `exit`, the panel's
+# Cancel (TERM), Ctrl+C (INT), a closed terminal (HUP): no registry credential
+# left on a host, and the deploy lock released. One EXIT trap for both, because a
+# second `trap … EXIT` would replace the first.
+engine_cleanup() {
+    local h
+    for h in $REGISTRY_LOGGED_IN; do
+        registry_logout "$h"
+    done
+    release_deploy_lock
+}
+
+arm_cleanup() {
+    trap engine_cleanup EXIT
+    # Without these a signal kills bash outright and the EXIT trap never runs.
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
+    trap 'exit 129' HUP
+}
+
 # Log the host's docker in to the registry, when credentials are configured.
 ensure_registry_login() {
     local host="$1"
     if [[ -z "${REGISTRY_TOKEN:-}" || -z "${REGISTRY_USER:-}" || -z "${REGISTRY_HOST:-}" ]]; then
-        print_warning "[$host] REGISTRY_USER/REGISTRY_TOKEN not set — assuming the image is public or the host is already logged in"
+        print_warning "[$host] no registry login — assuming the image is public or the host is already logged in (deployctl access)"
         return 0
     fi
+    # Recorded before the attempt: a login that half-happened is logged out too.
+    [[ "$REGISTRY_LOGGED_IN" == *" ${host} "* ]] || REGISTRY_LOGGED_IN+="${host} "
+    arm_cleanup
     if [[ "${DEPLOYCTL_DRY_RUN:-}" == "1" ]]; then
         echo "  [dry-run] docker login ${REGISTRY_HOST} on ${host}"
         return 0
@@ -256,6 +284,7 @@ ensure_registry_login() {
 # hand, with no credentials in the config, is left as it was.
 registry_logout() {
     local host="$1"
+    REGISTRY_LOGGED_IN="${REGISTRY_LOGGED_IN/ ${host} / }"
     [[ -n "${REGISTRY_TOKEN:-}" && -n "${REGISTRY_USER:-}" && -n "${REGISTRY_HOST:-}" ]] || return 0
     if [[ "${DEPLOYCTL_DRY_RUN:-}" == "1" ]]; then
         echo "  [dry-run] docker logout ${REGISTRY_HOST} on ${host}"
@@ -539,8 +568,8 @@ revert_host() {
 #
 # A directory on the primary, because mkdir is atomic: of two runs racing for it,
 # exactly one creates it. It records who took it, so a refusal names a person and
-# a start time rather than just "locked". Released by an EXIT trap, which also
-# fires on cancel (TERM) and Ctrl+C. Only a SIGKILL, or losing the network at the
+# a start time rather than just "locked". Released by the EXIT trap (engine_cleanup),
+# which also fires on cancel (TERM) and Ctrl+C. Only a SIGKILL, or losing the network at the
 # moment of release, leaves it behind — `deployctl deploy unlock` clears it, after
 # showing whose it was.
 readonly LOCK_DIR="${REMOTE_DIR}/.deployctl.lock"
@@ -578,11 +607,7 @@ acquire_deploy_lock() {
     case "${verdict%%$'\n'*}" in
         ACQUIRED)
             DEPLOY_LOCK_HELD=1
-            trap release_deploy_lock EXIT
-            # Without these a signal kills bash outright and the EXIT trap never runs.
-            trap 'exit 143' TERM
-            trap 'exit 130' INT
-            trap 'exit 129' HUP
+            arm_cleanup
             return 0
             ;;
         HELD)

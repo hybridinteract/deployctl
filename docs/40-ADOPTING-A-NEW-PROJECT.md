@@ -10,7 +10,7 @@ say so rather than forking the tool.
 ## 1. Install, then initialise the repository
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.13.0      # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0      # once per machine
 cd /path/to/new-project
 deployctl init --mode single --env production
 ```
@@ -18,7 +18,8 @@ deployctl init --mode single --env production
 `init` creates `deploy/` in the repository: `project/` (the app contract — committed),
 `config/` and `generated/` (gitignored — `deploy/.gitignore` is written before any secret
 is). Nothing of the tool itself is copied in; every project runs the installed version, and
-upgrading is installing a newer tag.
+upgrading is installing a newer tag. The control panel's **Add project** → **New project**
+form does the same, with the values filled in (`init --set`).
 
 Commit `deploy/project/` and `deploy/.gitignore`. Check with `git status` before the first
 commit that no `config/*.env` is staged.
@@ -46,7 +47,8 @@ deployctl ci doctor --env production                 # what else CI/CD still nee
 
 `ci init --force` regenerates only the two workflows deployctl manages (`build-image.yml`,
 `deploy.yml`), after showing the diff; your `ci.yml` is yours and is left alone. If it ran
-`./deployctl/deployctl`, point it at the installed `deployctl`.
+`./deployctl/deployctl`, point it at the installed `deployctl`. `adopt --apply` also puts the
+project on this machine's list, so it opens from the control panel's switcher.
 
 ---
 

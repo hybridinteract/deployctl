@@ -19,7 +19,7 @@ import subprocess
 
 import typer
 
-from .. import paths, ui
+from .. import paths, projects, ui
 from ..scaffold import GITIGNORE
 
 #: The project's own files: moved into the new deploy directory.
@@ -121,6 +121,11 @@ def adopt(
     _git(repo, "add", "--", rel(dest / ".gitignore"), rel(dest / "generated" / ".gitkeep"))
 
     ui.ok(f"adopted: the project's files are in {rel(dest)}/, the copied tool is staged for removal")
+    try:
+        project, _ = projects.add(dest)
+        ui.ok(f"on this machine's project list as {project.name} — its panel: {project.url}")
+    except projects.RegistryError as exc:
+        ui.warn(f"not added to this machine's project list: {exc}")
     left = sorted(p.name for p in src.iterdir()) if src.exists() else []
     if left:
         ui.warn(f"left in {rel(src)}/ (not tracked, so not removed): {', '.join(left)}")

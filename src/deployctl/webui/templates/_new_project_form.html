@@ -1,0 +1,62 @@
+{#-
+  New project: what `deployctl init --set …` needs to create a project in this
+  repository. Nothing secret is asked here — a command line is visible to every
+  process on the machine — so databases and passwords come next, in the new
+  project's Setup and Configure tabs.
+-#}
+<form id="newProjectForm" class="new-project" method="post">
+  <input type="hidden" name="root" value="{{ root }}">
+  <p class="guide-note first"><b>{{ name }}</b> has no deployctl project yet. Describe it, and the new
+    project opens on <b>Setup</b> — the server, its secrets and the first deploy come next, from there.</p>
+
+  <fieldset class="field">
+    <legend>Shape</legend>
+    <label><input type="radio" name="mode" value="single" checked> single — one server, Let's Encrypt, Postgres and Redis beside the app</label>
+    <label><input type="radio" name="mode" value="cluster"> cluster — servers behind a load balancer, managed databases</label>
+  </fieldset>
+  <label class="field"><span>Environment</span>
+    <input type="text" name="env" value="production" spellcheck="false" autocomplete="off" required></label>
+
+  <label class="field"><span>Project name <span class="dim">— containers and volumes are named after it</span></span>
+    <input type="text" name="PROJECT_NAME" value="{{ values.PROJECT_NAME }}" spellcheck="false" autocomplete="off" required></label>
+  <label class="field"><span>Domain <span class="dim">— the app is served at &lt;subdomain&gt;.&lt;domain&gt;</span></span>
+    <input type="text" name="BASE_DOMAIN" value="" placeholder="example.com" spellcheck="false" autocomplete="off" required></label>
+  <label class="field"><span>Subdomain</span>
+    <input type="text" name="API_SUBDOMAIN" value="{{ values.API_SUBDOMAIN }}" spellcheck="false" autocomplete="off"></label>
+  <label class="field"><span>Image <span class="dim">— where CI publishes it, lowercase</span></span>
+    <input type="text" name="IMAGE_REPO" value="{{ values.IMAGE_REPO or '' }}" placeholder="ghcr.io/your-org/your-app" spellcheck="false" autocomplete="off" required></label>
+  <label class="field"><span>Servers <span class="dim">— address each one; several for a cluster, separated by spaces</span></span>
+    <input type="text" name="HOSTS" value="" placeholder="203.0.113.10" spellcheck="false" autocomplete="off" required></label>
+  <label class="field"><span>SSH user on the servers</span>
+    <input type="text" name="SSH_USER" value="{{ values.SSH_USER }}" spellcheck="false" autocomplete="off"></label>
+  <label class="field"><span>Certificate email <span class="dim">— single only: Let's Encrypt's expiry notices</span></span>
+    <input type="email" name="ACME_EMAIL" value="" placeholder="ops@example.com" autocomplete="off"></label>
+
+  <details class="fold">
+    <summary>Your app — how it runs (project/project.env, committed with the code)</summary>
+    <p class="hint">The defaults fit a FastAPI app with Celery. Everything here can be changed later in project.env.</p>
+    <label class="field"><span>App module <span class="dim">— the ASGI/WSGI target</span></span>
+      <input type="text" name="APP_MODULE" value="{{ values.APP_MODULE }}" spellcheck="false" autocomplete="off"></label>
+    <label class="field"><span>Port inside the container</span>
+      <input type="text" name="APP_PORT" value="{{ values.APP_PORT }}" inputmode="numeric" autocomplete="off"></label>
+    <label class="field"><span>Health path <span class="dim">— cheap, no login</span></span>
+      <input type="text" name="HEALTH_PATH" value="{{ values.HEALTH_PATH }}" spellcheck="false" autocomplete="off"></label>
+    <label class="field"><span>Migration command <span class="dim">— empty: none</span></span>
+      <input type="text" name="MIGRATE_CMD" value="{{ values.MIGRATE_CMD }}" spellcheck="false" autocomplete="off"></label>
+    <label class="check-line"><input type="checkbox" name="celery" checked> The app runs Celery</label>
+    <label class="field"><span>Celery app</span>
+      <input type="text" name="CELERY_APP" value="{{ values.CELERY_APP }}" spellcheck="false" autocomplete="off"></label>
+    <label class="field"><span>Dockerfile <span class="dim">— relative to the build context</span></span>
+      <input type="text" name="DOCKERFILE" value="{{ values.DOCKERFILE }}" spellcheck="false" autocomplete="off"></label>
+    <label class="field"><span>Build context <span class="dim">— relative to the deploy directory</span></span>
+      <input type="text" name="BUILD_CONTEXT" value="{{ values.BUILD_CONTEXT }}" spellcheck="false" autocomplete="off"></label>
+    <label class="field"><span>Build target <span class="dim">— the Dockerfile stage; empty: the last</span></span>
+      <input type="text" name="BUILD_TARGET" value="{{ values.BUILD_TARGET }}" spellcheck="false" autocomplete="off"></label>
+  </details>
+
+  <div class="import-actions">
+    <button type="button" class="btn" data-act="project-new">Create the project</button>
+    <button type="button" class="btn ghost" data-act="guide-close">Cancel</button>
+  </div>
+  <div id="newProjectResult" aria-live="polite"></div>
+</form>

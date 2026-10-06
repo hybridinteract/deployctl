@@ -361,8 +361,9 @@ server-side state that deployctl never overwrites, so nothing repairs it automat
 
 ### `doctor` fails: cannot resolve the image
 In order of likelihood: the tag does not exist (`deployctl image tags`); the package is
-private and your `REGISTRY_TOKEN` (`config/local.env`) is missing, expired, or not
-SSO-authorized for the org; CI has not published anything yet.
+private and this machine's registry login is missing, lacks `read:packages`, has expired, or
+is not SSO-authorised for the organisation — `deployctl access` says which login is used and
+what is wrong with it; CI has not published anything yet.
 
 **In CI**, the hosts log in with the run's own `GITHUB_TOKEN`, which can read the image only
 when the job calling the deploy grants `packages: read` — `deployctl ci doctor` checks your
@@ -476,9 +477,10 @@ or add an exclusion in `scripts/common/remote.sh::push_artifacts`.
 - **Prune old images** on the hosts occasionally; every release leaves one behind:
   `deployctl deploy shell <host>` then `docker image prune -a --filter until=720h`.
 - **When someone leaves:** remove their ssh key from the deploy user's `authorized_keys` on
-  every host and their access to the repository. Their registry token was their own
-  (`config/local.env` on their machine) and never reached GitHub or a server — the hosts are
-  logged out after every pull — so there is nothing of theirs to rotate there; rotate the
+  every host and their access to the repository. Their registry login was their own
+  (their `gh` login or saved token, on their machine) and never reached GitHub, and a host
+  holds it only for the length of a pull — logged out afterwards, on failure too — so there
+  is nothing of theirs to rotate there; rotate the
   shared secrets they could read (database passwords, API keys) if the departure calls for it.
 - **Rotate application secrets** deliberately, knowing the cost:
   `deployctl setup --env <env> --rotate-secrets`, then

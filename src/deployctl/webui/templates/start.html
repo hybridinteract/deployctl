@@ -9,6 +9,7 @@
 <header class="topbar">
   <div class="brand">deployctl</div>
   <div class="project">{{ project }} <span class="dim">{{ repository }}</span></div>
+  <div class="topbar-right">{% include "_switcher.html" %}</div>
 </header>
 <main class="start" data-start="1">
   <section class="group">
@@ -31,5 +32,6 @@
   </section>
 </main>
 {% include "_import_dialog.html" %}
+{% include "_add_project_dialog.html" %}
 <div class="toasts" id="toasts" aria-live="polite"></div>
 {% endblock %}

@@ -20,6 +20,10 @@ pytestmark = pytest.mark.skipif(shutil.which("rsync") is None, reason="the engin
 
 
 def engine(*args: str, **extra: str) -> tuple[int, str]:
+    return _bash([str(DEPLOYCTL / "scripts" / "deploy.sh"), *args], **extra)
+
+
+def _bash(argv: list[str], **extra: str) -> tuple[int, str]:
     env = {
         "PATH": os.environ["PATH"],
         "NO_COLOR": "1",
@@ -40,10 +44,7 @@ def engine(*args: str, **extra: str) -> tuple[int, str]:
         "TLS_LE": "false",
         **extra,
     }
-    proc = subprocess.run(
-        ["bash", str(DEPLOYCTL / "scripts" / "deploy.sh"), *args],
-        env=env, capture_output=True, text=True, timeout=60,
-    )
+    proc = subprocess.run(["bash", *argv], env=env, capture_output=True, text=True, timeout=60)
     return proc.returncode, proc.stdout + proc.stderr
 
 
@@ -161,6 +162,23 @@ class TestNoRegistryLoginOutlivesTheRun:
             pull = next(i for i, l in enumerate(lines) if i > login and host in l and " pull" in l)
             logout = next(i for i, l in enumerate(lines) if f"docker logout ghcr.io on {host}" in l)
             assert login < pull < logout, host
+
+    def test_a_run_that_dies_after_logging_in_still_logs_out(self):
+        """Between login and pull, a run can fail, be cancelled or lose its terminal;
+        the hosts' docker must not keep the login — least of all a person's gh token."""
+        scripts = DEPLOYCTL / "scripts"
+        rc, out = _bash(["-c", f'source "{scripts}/common/common.sh"; source "{scripts}/common/remote.sh"; '
+                               'ensure_registry_login 203.0.113.10; echo "the pull failed"; exit 1'], **self.CREDS)
+        assert rc == 1, out
+        login = out.index("docker login ghcr.io on 203.0.113.10")
+        assert login < out.index("the pull failed") < out.index("docker logout ghcr.io on 203.0.113.10")
+
+    def test_a_host_logged_out_on_the_way_is_not_logged_out_again(self):
+        rc, out = engine("update", **self.CREDS)
+        assert rc == 0, out
+        for host in ("203.0.113.10", "203.0.113.11"):
+            logins = out.count(f"docker login ghcr.io on {host}")
+            assert logins and out.count(f"docker logout ghcr.io on {host}") == logins, host
 
     def test_a_host_nobody_logged_in_is_left_alone(self):
         rc, out = engine("update")

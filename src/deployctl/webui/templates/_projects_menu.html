@@ -1,0 +1,22 @@
+{#- The switcher's list (/projects). Choosing a project opens its own panel — this
+    one keeps running, with any job it has going. -#}
+{% if error %}<p class="hint err">{{ error }}</p>{% endif %}
+<ul class="switcher-list">
+  {% for p in projects %}
+  {% set here = p.deploy_dir == current %}
+  <li>
+    <button type="button" class="switcher-item{% if here %} current{% endif %}" data-act="project-open"
+            data-name="{{ p.name }}" {% if here or p.missing %}disabled{% endif %}
+            title="{{ p.root }}{% if p.running %} — running on port {{ p.port }}{% endif %}">
+      <span class="dot{% if p.running %} on{% endif %}" aria-hidden="true"></span>
+      <span class="switcher-name">{{ p.name }}{% if here %} <span class="dim">(this one)</span>{% endif %}</span>
+      {% if p.missing %}<span class="hint err">not found</span>
+      {% elif p.environments %}<span class="hint" data-lazy="/projects/state?name={{ p.name|urlencode }}">…</span>
+      {% else %}<span class="hint">not configured yet</span>{% endif %}
+    </button>
+  </li>
+  {% else %}
+  <li class="hint">No projects on this machine yet.</li>
+  {% endfor %}
+</ul>
+<button type="button" class="btn ghost sm switcher-add" data-act="guide" data-guide="addProjectDialog">+ Add project…</button>

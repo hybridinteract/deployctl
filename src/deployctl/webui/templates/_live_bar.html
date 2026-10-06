@@ -14,6 +14,9 @@
       <span class="dim">· {% if by.url %}<a href="{{ by.url }}" target="_blank" rel="noopener noreferrer">{{ by.label }}</a>{% else %}{{ by.label }}{% endif %}
         · {{ live.ago(newest.deployed_at) or newest.deployed_at }}</span>
     </span>
+  {% elif server.data.hosts | rejectattr('reachable') | list %}
+    {#- No tag from a host that did not answer is not "nothing deployed": it is unknown. -#}
+    <span class="pill unknown" title="{{ server.data.hosts | rejectattr('reachable') | map(attribute='host') | join(', ') }} did not answer"><span class="pill-mark" aria-hidden="true">?</span>hosts unreachable — tag unknown</span>
   {% else %}
     {{ pill('todo', 'nothing deployed yet') }}
   {% endif %}

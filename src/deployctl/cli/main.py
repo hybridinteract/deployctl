@@ -14,6 +14,7 @@ import typer
 
 from .. import __version__
 from . import paths
+from .commands import access as access_cmd
 from .commands import adopt as adopt_cmd
 from .commands import backup as backup_cmd
 from .commands import ci as ci_cmd
@@ -21,6 +22,7 @@ from .commands import deploy as deploy_cmd
 from .commands import image as image_cmd
 from .commands import init as init_cmd
 from .commands import migrate_config as migrate_config_cmd
+from .commands import projects as projects_cmd
 from .commands import selftest as selftest_cmd
 from .commands import server as server_cmd
 from .commands import setup as setup_cmd
@@ -79,6 +81,8 @@ app.command("selftest")(selftest_cmd.selftest)
 app.command("webui")(webui_cmd.webui)
 app.command("adopt")(adopt_cmd.adopt)
 app.command("migrate-config")(migrate_config_cmd.migrate_config)
+app.add_typer(access_cmd.access_app)
+app.add_typer(projects_cmd.projects_app)
 app.add_typer(deploy_cmd.deploy_app)
 app.add_typer(image_cmd.image_app)
 app.add_typer(ci_cmd.ci_app)

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{#-
+  The home panel: the projects on this machine, and Add project. Each project's
+  panel is its own process on its own port; this page belongs to none of them.
+-#}
+{% from "_macros.html" import codeblock %}
+{% block body %}
+<header class="topbar">
+  <div class="brand">deployctl</div>
+  <div class="project">Projects on this machine</div>
+</header>
+<main class="start home"{% if add %} data-add-open="1"{% endif %}>
+  <section class="group">
+    <header class="group-head">
+      <h2>Your projects</h2>
+      <p>Each opens in a control panel of its own, on a port of its own — open several side by side.</p>
+    </header>
+    {% if error %}<p class="hint err">{{ error }}</p>{% endif %}
+    <ul class="checklist project-list">
+      {% for p in projects %}
+      <li class="check">
+        <div class="check-body">
+          <b>{{ p.name }}</b>
+          <span class="dim">{{ p.root }}{% if p.environments %} · {{ p.environments|join(', ') }}{% endif %}</span>
+          {% if p.missing %}
+          <span class="hint err">Not found at this path any more — remove it: deployctl projects remove {{ p.name }}</span>
+          {% else %}
+          <span class="hint" data-lazy="/projects/state?name={{ p.name|urlencode }}">{% if p.environments %}…{% else %}not configured yet{% endif %}</span>
+          <div><button type="button" class="btn sm" data-act="project-open" data-name="{{ p.name }}">Open</button></div>
+          {% endif %}
+        </div>
+      </li>
+      {% else %}
+      <li class="hint">No projects on this machine yet — add the first one.</li>
+      {% endfor %}
+    </ul>
+    <div class="start-actions">
+      <button type="button" class="btn" data-act="guide" data-guide="addProjectDialog">+ Add project…</button>
+    </div>
+  </section>
+  <section class="group">
+    <header class="group-head">
+      <h2>Your access</h2>
+      <p>The one setup for every project: see and fix it with <code>deployctl access</code>.</p>
+    </header>
+    {{ codeblock('access', 'deployctl access') }}
+  </section>
+</main>
+{% include "_add_project_dialog.html" %}
+<div class="toasts" id="toasts" aria-live="polite"></div>
+{% endblock %}

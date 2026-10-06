@@ -18,6 +18,18 @@ CELERY_APP=app.worker.celery_app
 """
 
 
+@pytest.fixture(autouse=True)
+def no_personal_access(tmp_path, monkeypatch):
+    """No test may deploy, list tags or push with the developer's own registry login:
+    not their gh token, not a token saved in their ~/.deployctl, not one in their shell."""
+    from deployctl.cli import access
+
+    monkeypatch.setattr(access, "_gh_login", lambda: None)
+    monkeypatch.setenv("DEPLOYCTL_HOME", str(tmp_path / "home"))
+    for key in ("REGISTRY_USER", "REGISTRY_TOKEN", "GHCR_USER", "GHCR_TOKEN", "DEPLOYCTL_REGISTRY_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+
+
 @pytest.fixture
 def project(tmp_path, monkeypatch) -> pathlib.Path:
     """A temporary deployctl root with the real templates and profiles copied in.

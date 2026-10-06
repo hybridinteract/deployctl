@@ -25,6 +25,7 @@ import pytest
 WEBUI = (pathlib.Path(__file__).resolve().parent.parent / "src" / "deployctl") / "webui"
 PANEL_JS = WEBUI / "static" / "panel.js"
 ROUTES_PY = WEBUI / "panel" / "routes.py"
+PANEL_PY = sorted((WEBUI / "panel").glob("*.py"))
 TEMPLATES = WEBUI / "templates"
 
 
@@ -39,12 +40,13 @@ def _template_acts() -> set[str]:
 
 
 def _server_rendered_acts() -> set[str]:
-    """data-act values baked into HTML that routes.py builds by hand.
+    """data-act values baked into HTML that a panel module builds by hand.
 
     These are the dangerous ones: they are not in a template, so a reviewer
-    skimming the templates will not see them at all.
+    skimming the templates will not see them at all. Every module, not only
+    routes.py: new routes live in modules of their own.
     """
-    return set(re.findall(r'data-act=\\?"([a-z-]+)\\?"', ROUTES_PY.read_text()))
+    return set(re.findall(r'data-act=\\?"([a-z-]+)\\?"', "".join(p.read_text() for p in PANEL_PY)))
 
 
 HANDLED = _handled_acts()
@@ -66,7 +68,7 @@ class TestDelegationIsComplete:
     @pytest.mark.parametrize("act", sorted(FROM_SERVER))
     def test_server_rendered_act_is_handled(self, act):
         assert act in HANDLED, (
-            f'routes.py renders data-act="{act}" but panel.js has no case for it'
+            f'a panel module renders data-act="{act}" but panel.js has no case for it'
         )
 
     def test_no_handler_is_orphaned(self):
@@ -210,9 +212,10 @@ class TestNoInlineHandlers:
             found = re.findall(r'\son[a-z]+="', text)
             assert not found, f"{path.name} has inline handlers {found}, blocked by the CSP"
 
-    def test_routes_renders_no_inline_handlers(self):
-        assert "onclick=" not in ROUTES_PY.read_text(), (
-            "routes.py renders an inline onclick; the CSP blocks it"
+    @pytest.mark.parametrize("module", PANEL_PY, ids=lambda p: p.name)
+    def test_no_panel_module_renders_inline_handlers(self, module):
+        assert "onclick=" not in module.read_text(), (
+            f"{module.name} renders an inline onclick; the CSP blocks it"
         )
 
 

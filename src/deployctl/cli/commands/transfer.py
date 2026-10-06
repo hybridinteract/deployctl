@@ -15,7 +15,7 @@ import pathlib
 import typer
 
 from .. import paths, snapshots, transfer, ui
-from ..envfile import read_env_file
+from ..access import registry as registry_login
 
 _PASSPHRASE_ENV = "DEPLOYCTL_PASSPHRASE"
 
@@ -37,14 +37,13 @@ def _fail(as_json: bool, message: str, hint: str = "") -> None:
 
 def _your_access() -> dict:
     """What this machine still needs that no config file can give it."""
-    local = read_env_file(paths.local_config())
-    return {"registry": bool(local.get("REGISTRY_USER") and local.get("REGISTRY_TOKEN"))}
+    return {"registry": bool(registry_login())}
 
 
 def _print_access(access: dict) -> None:
     ui.info("What is yours to set up — never part of a shared config:")
-    print(f"  {'✓' if access['registry'] else '·'} your registry login   config/local.env "
-          "(REGISTRY_USER + a GitHub token with read:packages) — the panel's Configure tab")
+    print(f"  {'✓' if access['registry'] else '·'} your registry login   your gh login with read:packages, "
+          "or a saved token — see: deployctl access")
     print("  · your ssh key on the servers   send your public key to whoever runs the project; "
           "check with: deployctl deploy status")
     print("  · your GitHub login             gh auth login — for the CI/CD tab and deploying through GitHub")

@@ -131,13 +131,9 @@ BASE_DOMAIN=example.com
 IMAGE_REPO=ghcr.io/your-org/myapp
 ```
 
-`config/local.env` — yours, on this machine only (never exported or uploaded; CI logs in
-with its own token):
-
-```sh
-REGISTRY_USER=your-github-user
-REGISTRY_TOKEN=ghp_…                 # classic PAT, read:packages only
-```
+Your registry login is your own, not the project's: your `gh` login with `read:packages`,
+or a read:packages-only token saved once (`deployctl access set-token`). `deployctl access`
+checks it. CI logs in with its own token.
 
 `config/production.env`:
 
