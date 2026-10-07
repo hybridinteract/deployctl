@@ -92,6 +92,115 @@ class TestStoredInConfig:
         paths.app_values_file("staging").write_text("MAILGUN_API_KEY=key-live\n")
         assert paths.known_environments() == ["staging"]
 
+    def test_a_key_the_template_does_not_declare_still_ships(self, staging):
+        """herbally's storage keys were saved, then dropped at render because the template lacked them."""
+        paths.app_values_file("staging").write_text("DO_SPACES_BUCKET_NAME=herbally\nDO_SPACES_REGION=\n")
+        rendered = _render()
+        assert rendered["DO_SPACES_BUCKET_NAME"] == "herbally"
+        assert "DO_SPACES_REGION" not in rendered, "an empty value leaves the app its own default"
+
+    def test_a_key_deployctl_writes_is_not_replaced_from_there(self, staging):
+        _render()
+        minted = read_env_file(paths.env_artifact("staging"))["SECRET_KEY"]
+        paths.app_values_file("staging").write_text("SECRET_KEY=typed-in-the-panel\n")
+        assert _render()["SECRET_KEY"] == minted
+
+    def test_a_project_field_is_an_app_key_without_saying_so(self, staging):
+        """The scaffolded fields.toml shows no `target`; such a field was saved where the app never sees it."""
+        from deployctl.webui.panel import state
+
+        paths.PROJECT_FIELDS.write_text(
+            '[[section]]\nid = "storage"\ntitle = "Storage"\n\n'
+            '[[section.field]]\nkey = "DO_SPACES_BUCKET_NAME"\nlabel = "Bucket"\n'
+        )
+        state.save_form("staging", {"DO_SPACES_BUCKET_NAME": "herbally"})
+        assert read_env_file(paths.app_values_file("staging"))["DO_SPACES_BUCKET_NAME"] == "herbally"
+        assert "DO_SPACES_BUCKET_NAME" not in read_env_file(paths.config_file("staging"))
+        assert _render()["DO_SPACES_BUCKET_NAME"] == "herbally"
+
+
+class TestMissingAppKeys:
+    """What validate and the panel say about the app's keys the deployed .env leaves out."""
+
+    # herbally's own .env.example, abridged: four storage keys blank, the rest defaults.
+    EXAMPLE = """\
+APP_NAME=herbally
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+REDIS_PASSWORD=
+DO_SPACES_ENDPOINT_URL=
+DO_SPACES_ACCESS_KEY_ID=
+DO_SPACES_SECRET_ACCESS_KEY=
+DO_SPACES_BUCKET_NAME=
+DO_SPACES_REGION=sgp1
+"""
+    STORAGE = ["DO_SPACES_ACCESS_KEY_ID", "DO_SPACES_BUCKET_NAME", "DO_SPACES_ENDPOINT_URL",
+               "DO_SPACES_SECRET_ACCESS_KEY"]
+
+    @pytest.fixture
+    def repo(self, write_config, project, monkeypatch):
+        (project / "project" / "app.env.template").write_text(TEMPLATE)
+        write_config("staging", SINGLE + "BUILD_CONTEXT=.\n")
+        monkeypatch.setattr(paths, "REPO_ROOT", project)
+        (project / ".env.example").write_text(self.EXAMPLE)
+        return project
+
+    def _warnings(self) -> list[str]:
+        from deployctl.cli import checks
+
+        return [p.message for p in checks.app_env_checks(config.load("staging")) if p.level == "warn"]
+
+    def test_the_blank_ones_are_named_and_nothing_else(self, repo):
+        (warning,) = self._warnings()
+        assert warning.startswith(".env.example leaves " + ", ".join(self.STORAGE) + " blank")
+        for quiet in ("APP_NAME", "JWT_", "DO_SPACES_REGION", "REDIS_PASSWORD"):  # defaults; deployctl's own
+            assert quiet not in warning
+
+    def test_supplied_in_any_way_it_stops(self, repo):
+        (repo / "project" / "app.env.template").write_text(
+            TEMPLATE + "DO_SPACES_ENDPOINT_URL=https://sgp1.digitaloceanspaces.com\n"   # a value in the template
+            "# DO_SPACES_BUCKET_NAME=\n")                                             # production does not need it
+        paths.app_values_file("staging").write_text(
+            "DO_SPACES_ACCESS_KEY_ID=key\nDO_SPACES_SECRET_ACCESS_KEY=secret\n")       # set in the panel
+        assert self._warnings() == []
+
+    def test_declared_blank_is_still_missing(self, repo):
+        """`KEY=` in the template ships an empty value — the app gets "" all the same."""
+        (repo / "project" / "app.env.template").write_text(TEMPLATE + "".join(f"{k}=\n" for k in self.STORAGE))
+        (warning,) = self._warnings()
+        assert "DO_SPACES_BUCKET_NAME" in warning
+
+    def test_every_example_file_counts(self, repo):
+        (repo / ".env.example").unlink()
+        (repo / ".env.production.example").write_text("SENTRY_DSN=\n")
+        (warning,) = self._warnings()
+        assert warning.startswith(".env.production.example leaves SENTRY_DSN blank")
+
+    def test_only_the_files_that_leave_them_blank_are_named(self, repo):
+        (repo / ".env.production.example").write_text("DO_SPACES_BUCKET_NAME=prod-bucket\n")
+        (warning,) = self._warnings()
+        assert warning.startswith(".env.example leaves DO_SPACES_ACCESS_KEY_ID")
+
+    def test_no_example_file_no_warning(self, repo):
+        (repo / ".env.example").unlink()
+        assert self._warnings() == []
+
+    def test_a_deployctl_key_set_for_the_app_is_said_to_be_ignored(self, repo):
+        (repo / ".env.example").unlink()
+        paths.app_values_file("staging").write_text("SECRET_KEY=typed-in-the-panel\n")
+        (warning,) = self._warnings()
+        assert "SECRET_KEY" in warning and "ignored" in warning
+
+    def test_validate_and_the_panel_both_say_it(self, repo):
+        from typer.testing import CliRunner
+
+        from deployctl.cli.main import app
+        from deployctl.webui.panel import state
+
+        result = CliRunner().invoke(app, ["validate", "--env", "staging", "--skip-docker"])
+        assert "DO_SPACES_BUCKET_NAME" in result.output
+        assert any("DO_SPACES_BUCKET_NAME" in p["message"] for p in state.summary("staging")["problems"])
+
 
 class TestAdoptingAnExistingInstall:
     def test_values_in_the_rendered_file_are_moved_into_config(self, staging):

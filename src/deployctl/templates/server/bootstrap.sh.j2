@@ -74,6 +74,10 @@ log "starting deployctl host bootstrap ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
 if [[ ! -s /root/.ssh/authorized_keys && -z "$EXTRA_AUTHORIZED_KEYS" ]]; then
     die "no SSH keys found — recreate the server with an SSH key selected, or set EXTRA_AUTHORIZED_KEYS above"
 fi
+# Settings rendered from an empty configuration would only fail at step 4, after
+# Docker and the deploy user are already in place.
+[[ -n "$DEPLOY_USER" ]] || die "DEPLOY_USER is empty — print this script from the project: deployctl server bootstrap-script"
+[[ "$REMOTE_DIR" == /?* ]] || die "REMOTE_DIR must be an absolute path (got '$REMOTE_DIR') — print this script from the project"
 
 # ---------------------------------------------------------------------------
 # 1. Update the system, keeping existing config files on conflicts.

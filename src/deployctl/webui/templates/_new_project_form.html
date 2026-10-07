@@ -46,6 +46,8 @@
     <label class="check-line"><input type="checkbox" name="celery" checked> The app runs Celery</label>
     <label class="field"><span>Celery app</span>
       <input type="text" name="CELERY_APP" value="{{ values.CELERY_APP }}" spellcheck="false" autocomplete="off"></label>
+    <label class="field"><span>Celery queues <span class="dim">— every queue the app sends tasks to; an extra one costs nothing, a missing one loses tasks</span></span>
+      <input type="text" name="CELERY_QUEUES" value="{{ values.CELERY_QUEUES }}" placeholder="e.g. celery,emails" spellcheck="false" autocomplete="off"></label>
     <label class="field"><span>Dockerfile <span class="dim">— relative to the build context</span></span>
       <input type="text" name="DOCKERFILE" value="{{ values.DOCKERFILE }}" spellcheck="false" autocomplete="off"></label>
     <label class="field"><span>Build context <span class="dim">— relative to the deploy directory</span></span>

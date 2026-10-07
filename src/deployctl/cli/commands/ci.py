@@ -229,7 +229,7 @@ def init(
     ctx = _context(cfg)
     target = workflows_dir()
     target.mkdir(parents=True, exist_ok=True)
-    blocked = []
+    blocked, foreign = [], []
     for name in MANAGED:
         path = target / name
         rel = path.relative_to(paths.REPO_ROOT)
@@ -238,6 +238,14 @@ def init(
             current = path.read_text()
             if current == content:
                 ui.info(f"{rel} is current")
+                continue
+            if not _MANAGED_HEADER.match(current):
+                # Somebody's own workflow under our name, perhaps feeding another
+                # deployment. --force means "take this version's template", never
+                # "replace a file deployctl did not write".
+                foreign.append(str(rel))
+                ui.warn(f"{rel} was not written by deployctl — left as it is, even with --force")
+                ui.hint(f"move it aside (git mv {rel} <another name>), then run: deployctl ci init --env {cfg.env}")
                 continue
             if not force:
                 blocked.append(str(rel))
@@ -267,8 +275,11 @@ def init(
             skeleton = _render(OWNED, ctx)
             print(skeleton[skeleton.index("  publish:"):])
 
+    if foreign:
+        ui.error(f"not written by deployctl, so not replaced: {', '.join(foreign)}")
     if blocked:
         ui.error(f"not overwritten: {', '.join(blocked)} — review the diff above, then: deployctl ci init --force")
+    if foreign or blocked:
         raise typer.Exit(1)
     print()
     ui.info("Next, once: Settings → Actions → General → Workflow permissions → \"Read and write\" (image push)")
@@ -449,8 +460,7 @@ def sync_config(
     # a missing generated secret would fail there too (CI never mints one).
     cfg = load_config(env_name)
     scope = scope_env(cfg, repo_level)
-    stored = read_env_file(paths.secrets_file(env_name))
-    unminted = [k for k in secrets.pinned(cfg) if not stored.get(k) and not cfg.raw_input.get(k)]
+    unminted = _unminted(cfg)
     if unminted:
         ui.error(f"config/secrets.{env_name}.env has no {', '.join(unminted)}")
         ui.hint(f"run `deployctl setup --env {env_name}` first — CI never generates secrets")
@@ -581,6 +591,12 @@ def _check(items: list[dict], key: str, status: str, title: str, detail: str = "
     items.append({"id": key, "status": status, "title": title, "detail": detail, "fix": fix, **extra})
 
 
+def _unminted(cfg: Config) -> list[str]:
+    """Generated secrets `setup` has not minted yet for this environment. CI never mints one."""
+    stored = read_env_file(paths.secrets_file(cfg.env))
+    return [k for k in secrets.pinned(cfg) if not stored.get(k) and not cfg.raw_input.get(k)]
+
+
 def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
     """Every piece CI/CD needs, checked: status ok | warn | todo | fail."""
     items: list[dict] = []
@@ -603,6 +619,15 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
     _check(items, "github", "ok", "GitHub", f"{info['name']} ({'private' if info['private'] else 'public'}) · you: {role}",
            value=info["permission"])
 
+    # CI deploys with this machine's config, secrets included, and only setup mints
+    # them. Every step below changes a server or GitHub for an environment CI could
+    # not deploy yet, and the last one (sync-config) would refuse — so stop here.
+    if _unminted(cfg):
+        _check(items, "setup", "todo", "Set up this environment first",
+               "CI deploys this machine's config, and setup creates its secrets — not run yet",
+               f"deployctl setup --env {env}")
+        return items
+
     if cfg.raw["CI_SCOPE"]:
         _check(items, "scope", "ok", "Where secrets live", cfg.raw["CI_SCOPE"])
     else:
@@ -622,7 +647,8 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
                    f"from deployctl {header.group(1)}, this is {__version__}", f"deployctl ci init --env {env} --force")
         elif not header:
             _check(items, f"workflow:{name}", "warn", f".github/workflows/{name}",
-                   "hand-written, not generated", f"deployctl ci init --env {env} --force")
+                   "hand-written, not generated — deployctl will not replace it",
+                   f"move it aside, then: deployctl ci init --env {env}", value="hand-written")
         else:
             _check(items, f"workflow:{name}", "ok", f".github/workflows/{name}", "current")
     ci_text = (wf / OWNED).read_text() if (wf / OWNED).is_file() else ""

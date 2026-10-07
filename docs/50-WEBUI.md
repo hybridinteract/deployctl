@@ -7,7 +7,7 @@ deploying or rolling back a tag, putting a config change live — happens in **O
 ## Start it
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.1   # once per machine
 deployctl webui               # this project's panel — or, outside a project, the home panel
 ```
 

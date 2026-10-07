@@ -142,7 +142,7 @@ DEFAULTS = {
     "APP_MODULE": "",
     "MIGRATE_CMD": "",
     "CELERY_APP": "",
-    "CELERY_QUEUES": "default",
+    "CELERY_QUEUES": "",
     "WORKER_ENTRYPOINT": "",
     # Full command overrides. Empty means "build the conventional command from
     # APP_MODULE / CELERY_APP" — set these when the app is not gunicorn+celery.
@@ -535,6 +535,12 @@ class Config:
             )
         if derived["WITH_BEAT"] and not raw["CELERY_APP"]:
             err("CELERY_APP is required when WITH_BEAT=true", "or set WITH_BEAT=false if the app has no Celery")
+        # Not defaulted: a guessed queue list looks like an answer, and a task routed
+        # to a queue the worker does not consume waits in Redis forever, unreported.
+        if raw["CELERY_APP"] and not raw["WORKER_COMMAND"] and not raw["CELERY_QUEUES"]:
+            err("CELERY_QUEUES is empty — the worker would not know which queues to consume",
+                "list every queue the app sends tasks to in project/project.env, e.g. CELERY_QUEUES=celery,emails "
+                "(a task with no route goes to `celery` unless the app sets task_default_queue)")
 
         # -- capacity: processes vs. the container's memory limit
         # A prefork pool that cannot fit is killed one child at a time by the

@@ -173,6 +173,7 @@ class TestAddProject:
         page = client.post(f"/projects/add?t={T}", data={"path": "/r/sales-crm"}).text
         assert 'id="newProjectForm"' in page and 'value="/r/sales-crm"' in page
         assert 'value="ghcr.io/acme/sales-crm"' in page and 'value="alembic upgrade head"' in page
+        assert 'value="default,high_priority,low_priority"' in page, "the queues app/core/background declares"
 
     def test_a_copied_in_deployctl_is_sent_to_the_terminal(self, client, cli):
         cli.answers["json"] = ({"ok": False, "status": "copied-in", "root": "/r/my app", "error": ""}, "")
@@ -184,7 +185,7 @@ class TestNewProject:
     FORM = {"mode": "single", "env": "production", "PROJECT_NAME": "sales-crm", "BASE_DOMAIN": "sales.test",
             "API_SUBDOMAIN": "api", "IMAGE_REPO": "ghcr.io/acme/sales-crm", "HOSTS": "203.0.113.20, 203.0.113.21",
             "SSH_USER": "deploy", "ACME_EMAIL": "ops@sales.test", "APP_MODULE": "app.main:app",
-            "celery": "on", "CELERY_APP": "app.worker"}
+            "celery": "on", "CELERY_APP": "app.worker", "CELERY_QUEUES": "celery, emails"}
 
     @pytest.fixture
     def fresh(self, tmp_path, monkeypatch):
@@ -204,13 +205,21 @@ class TestNewProject:
         sets = self._sets(argv)
         assert "POSTGRES_PASSWORD" not in sets and "EVIL" not in sets, "only INIT_KEYS, and never a secret"
         assert sets["HOSTS"] == "203.0.113.20 203.0.113.21" and sets["CELERY_APP"] == "app.worker"
+        assert sets["CELERY_QUEUES"] == "celery,emails", "one word for the worker's --queues="
+
+    def test_celery_needs_its_queues_named(self, client, cli, fresh):
+        """A guessed `default` left 20 of influen's 24 tasks unconsumed, silently."""
+        form = {**self.FORM, "root": str(fresh), "CELERY_QUEUES": " "}
+        assert "List the Celery queues" in client.post(f"/projects/new?t={T}", data=form).text
+        assert cli == []
 
     def test_no_celery_turns_beat_off_and_a_cluster_has_no_acme_email(self, client, cli, fresh):
         form = {**self.FORM, "root": str(fresh), "mode": "cluster"}
         del form["celery"]
         client.post(f"/projects/new?t={T}", data=form)
         sets = self._sets(cli[0])
-        assert sets["CELERY_APP"] == "" and sets["WITH_BEAT"] == "false" and "ACME_EMAIL" not in sets
+        assert sets["CELERY_APP"] == sets["CELERY_QUEUES"] == "" and sets["WITH_BEAT"] == "false"
+        assert "ACME_EMAIL" not in sets
 
     def test_what_is_missing_is_said_before_anything_runs(self, client, cli, fresh):
         form = {**self.FORM, "root": str(fresh), "BASE_DOMAIN": "", "HOSTS": " "}

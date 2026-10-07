@@ -26,7 +26,7 @@ pulled from a registry.
 Once per machine — the only setup that is yours rather than a project's:
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.1
 gh auth login                                     # your GitHub login: one setup for every project
 gh auth refresh -h github.com -s read:packages    # so it can pull images when you deploy from here
 deployctl access                                  # what you have, what is missing, how to fix it
@@ -121,7 +121,7 @@ Everything above is a command. Use these for scripting, CI, or when you want the
 invocation in your shell history:
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.1   # once per machine
 gh auth login && deployctl access       # once per machine: your GitHub login, checked
 deployctl init --mode single            # or --mode cluster; creates deploy/
 $EDITOR deploy/config/common.env          # project name, domain, image repo

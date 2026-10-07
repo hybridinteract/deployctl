@@ -254,6 +254,19 @@ def test_missing_app_module_is_rejected(write_config, project):
     assert any("APP_MODULE is required" in e for e in errors(config.load("production")))
 
 
+@pytest.mark.parametrize("project_env,refused", [
+    ("CELERY_APP=app.worker\nCELERY_QUEUES=\n", True),       # scaffolded, never answered
+    ("CELERY_APP=app.worker\n", True),                       # no line at all: no `default` guessed any more
+    ("CELERY_APP=app.worker\nCELERY_QUEUES=celery,emails\n", False),
+    ("CELERY_APP=app.worker\nWORKER_COMMAND=celery -A app.worker worker -Q a\n", False),  # its own command
+    ("CELERY_APP=\nWITH_BEAT=false\n", False),               # no Celery
+])
+def test_celery_queues_are_a_decision_not_a_default(write_config, project, project_env, refused):
+    (project / "project" / "project.env").write_text("APP_MODULE=app.main:app\n" + project_env)
+    write_config("production", CLUSTER)
+    assert any("CELERY_QUEUES is empty" in e for e in errors(config.load("production"))) is refused
+
+
 @pytest.mark.parametrize(
     "override,expected",
     [

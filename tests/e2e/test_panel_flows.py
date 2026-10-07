@@ -77,7 +77,8 @@ class Machine:
         if project:
             (repo / "deploy" / "project").mkdir(parents=True)
             (repo / "deploy" / "project" / "project.env").write_text(
-                "APP_MODULE=app.main:app\nHEALTH_PATH=/health\nMIGRATE_CMD=alembic upgrade head\nCELERY_APP=app.worker\n")
+                "APP_MODULE=app.main:app\nHEALTH_PATH=/health\nMIGRATE_CMD=alembic upgrade head\nCELERY_APP=app.worker\n"
+                "CELERY_QUEUES=celery\n")
         if configured:
             config = repo / "deploy" / "config"
             config.mkdir()

@@ -49,6 +49,16 @@ def test_the_page_carries_what_the_dialog_names(client):
     assert 'data-hosts="203.0.113.10"' in page
 
 
+def test_an_empty_application_section_says_how_to_fill_it(client, project):
+    """The scaffolded fields.toml is one section with no fields: it showed a bare heading."""
+    from deployctl.cli import scaffold
+
+    (project / "project" / "fields.toml").write_text(scaffold.FIELDS_STUB)
+    page = client.get("/?env=production").text
+    assert 'id="sec-appsecrets"' in page
+    assert page.count("Nothing to edit here yet") == 1, "only under the empty project section"
+
+
 def test_every_tab_is_a_real_tab(client):
     page = client.get("/?env=production").text
     for tab in ("operate", "setup", "cicd", "configure", "logs"):

@@ -108,6 +108,14 @@
             </dialog>
             {% endif %}
           </div>
+          {% else %}
+          {% if not sec.special %}
+          <div class="hint block full">
+            Nothing to edit here yet. Add a field for each key the app reads to
+            <code>project/fields.toml</code> (<code>key</code>, <code>label</code>, and <code>secret = true</code>
+            for a credential), reload, and its value is written into the app's <code>.env</code> on every deploy.
+          </div>
+          {% endif %}
           {% endfor %}
         </div>
       </div>

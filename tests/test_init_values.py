@@ -52,6 +52,20 @@ def test_each_value_lands_in_its_file(fresh):
     assert stat.S_IMODE(paths.COMMON_CONFIG.stat().st_mode) == 0o600
 
 
+def test_a_new_project_consumes_every_queue_the_background_template_declares(fresh):
+    """`default` alone left influen's and herbally's priority tasks waiting in Redis, unreported."""
+    from deployctl.cli import config
+
+    assert _init("PROJECT_NAME=sales-crm", "BASE_DOMAIN=sales.test").exit_code == 0
+    assert read_env_file(paths.PROJECT_CONFIG)["CELERY_QUEUES"] == "default,high_priority,low_priority"
+    assert not any("CELERY_QUEUES" in p.message for p in config.load("production").validate())
+
+
+def test_the_queues_can_be_set_as_the_project_is_created(fresh):
+    assert _init("CELERY_QUEUES=default,emails").exit_code == 0
+    assert read_env_file(paths.PROJECT_CONFIG)["CELERY_QUEUES"] == "default,emails"
+
+
 @pytest.mark.parametrize("pair, said", [
     ("POSTGRES_PASSWORD=hunter2", "expected KEY=VALUE"),
     ("PROJECT_NAME", "expected KEY=VALUE"),

@@ -8,6 +8,59 @@ here.
 
 ## Next
 
+### `validate` reads the app — what is left from herbally
+
+0.14.1 fixed what herbally hit (see the CHANGELOG). What remains reads the application's own
+files, so it shares one piece: a scan of the build context for `*.py`, skipping virtualenvs,
+`node_modules` and tests. Each finding is a **warning**: a heuristic must never block a
+deploy.
+
+#### Celery queue names the worker does not consume
+
+**Why.** Since 0.14.1 `init` writes the three queues `app/core/background/celery_app.py`
+declares, and an empty list is an error — but nothing checks the list against the app, so a
+project with a queue of its own, or one without that background module, can still miss one. Both projects so far routed tasks to queues the worker did not consume
+(influen: 20 of 24 tasks; herbally: `low_priority`), with no error anywhere.
+
+**Change.** Collect queue names from `Queue("x"`, `queue="x"`, `task_routes` and
+`task_default_queue`. Warn about any missing from `CELERY_QUEUES`, and about `celery` when
+some task has no route and the app sets no `task_default_queue`. The New project form
+pre-fills *Celery queues* from the same scan.
+
+#### An image entrypoint that migrates
+
+**Why.** With `MIGRATE_CMD` set, deployctl migrates before any container starts, so an
+entrypoint's `alembic upgrade head` normally has nothing to do. It hurts on a **rollback**,
+where the older image's entrypoint cannot find the newer revision and restart-loops, and
+when `MIGRATE_CMD` is empty. `40-ADOPTING` says so since 0.14.1; nothing detects it.
+
+**Change.** Follow `DOCKERFILE`'s `ENTRYPOINT` to a script in the build context and warn when
+it runs the migration (`MIGRATE_CMD`, `alembic upgrade`) without a switch the template turns
+off (`RUN_MIGRATIONS=false`). The warning must **not** depend on `WORKER_ENTRYPOINT`: the api
+has no entrypoint override (`compose.yml.j2`), so setting it would silence the warning while
+the api still migrates.
+
+#### Seed the app's keys from `.env.example`
+
+**Why.** Since 0.14.1, validate names the keys `.env*.example` leaves blank that the deployed
+`.env` would not set. A new project still starts from an empty template and fields file, so
+its first validate is a list of things to type in by hand.
+
+**Change.** `init` and the New project form write one `fields.toml` field per key the
+example files list that deployctl does not own: blank ones as fields to fill in, password
+type when the name ends in `_KEY`, `_SECRET`, `_TOKEN` or `_PASSWORD`. Keys with a value in
+the example are left to the app's defaults. No `project/ignore-keys` file: `# KEY=` in the
+template already marks a key production does not need.
+
+#### Every template key editable in the panel
+
+**Why.** Editing a key in the panel still needs a `fields.toml` entry. Since 0.14.1 a field
+alone is enough, but a key that is only in `app.env.template` cannot be edited there.
+
+**Change.** *Application settings* lists every key in `app.env.template`, as a password field
+when the name looks like a credential (same rule as above). `fields.toml` becomes optional
+metadata on top: labels, help, `select` options, `required`, grouping.
+
 ### Encrypted configuration in git — design first
 
 **Why.** Since 0.13 a project's configuration travels as one encrypted file

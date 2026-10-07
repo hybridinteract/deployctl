@@ -7,7 +7,8 @@ import subprocess
 
 import typer
 
-from .. import access, paths, registry, runner, tags, ui
+from .. import access, paths, registry, runner, ui
+from .. import tags as tag_cache  # not `tags`: the `image tags` command below would shadow it
 from ..config import Config
 from ..context import env_option, load_config
 
@@ -181,7 +182,7 @@ def tags(
         raise typer.Exit(2)
 
     # Registry only — no ssh here; "deployed" is the tag this machine last deployed.
-    current = tags.cached(cfg.env)
+    current = tag_cache.cached(cfg.env)
     for index, item in enumerate(found):
         marks = []
         if index == 0:
