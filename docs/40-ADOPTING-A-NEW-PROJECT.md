@@ -10,7 +10,7 @@ say so rather than forking the tool.
 ## 1. Install, then initialise the repository
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0      # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.1      # once per machine
 cd /path/to/new-project
 deployctl init --mode single --env production
 ```
@@ -46,7 +46,9 @@ deployctl ci doctor --env production                 # what else CI/CD still nee
 ```
 
 `ci init --force` regenerates only the two workflows deployctl manages (`build-image.yml`,
-`deploy.yml`), after showing the diff; your `ci.yml` is yours and is left alone. If it ran
+`deploy.yml`), after showing the diff; your `ci.yml` is yours and is left alone. A file under
+either name that deployctl did not write (no `# Managed by deployctl` header) is never
+replaced, even with `--force`: move it aside first. If it ran
 `./deployctl/deployctl`, point it at the installed `deployctl`. `adopt --apply` also puts the
 project on this machine's list, so it opens from the control panel's switcher.
 
@@ -77,15 +79,23 @@ in your app image with the same environment.
 
 **Check whether your image already migrates on start.** An `ENTRYPOINT` that runs
 `alembic upgrade head` before exec'ing the command is a common and perfectly reasonable
-thing for a `docker compose up` on a laptop — and it quietly defeats this setting. deployctl
-does not override an image's entrypoint, so that script runs in the api, worker and Beat
-containers alike, on every host: a three-service stack races three migrations against one
-database at boot, and a rollout multiplies that by the number of hosts. Nothing reports it;
-one of them wins and the rest fail into a restart loop, or they interleave.
+thing for a `docker compose up` on a laptop. deployctl does not override an image's
+entrypoint, so that script runs in the api, worker and Beat containers alike, on every host.
+With `MIGRATE_CMD` set it is mostly harmless on the way up — deployctl has already migrated
+on the primary, so each container finds nothing to do — but it bites twice:
+
+- **A rollback.** A rollback deliberately does not migrate: the older image does not know the
+  newer schema. Its entrypoint runs `alembic upgrade head` anyway, alembic cannot find the
+  revision the database is at, and a script that stops on errors never starts the app — the
+  containers restart in a loop and the rollback fails exactly when you need it.
+- **`MIGRATE_CMD` left empty.** Then the migrations are still pending when the containers
+  start, and three services on every host race them against one database. Nothing reports
+  it; one wins and the rest fail into a restart loop, or they interleave.
 
 Give the image a switch and turn it off here — `RUN_MIGRATIONS=false` in
 `project/app.env.template` is the shape — and let deployctl run migrations once, on the
-primary, before any container starts. Overriding `WORKER_ENTRYPOINT` only fixes the worker.
+primary, before any container starts. Overriding `WORKER_ENTRYPOINT` only fixes the worker
+and Beat: the api keeps the image's entrypoint.
 
 ```sh
 # ---------- Background work ----------
@@ -93,6 +103,13 @@ CELERY_APP=app.worker.celery_app
 CELERY_QUEUES=default,high
 WORKER_ENTRYPOINT=                  # optional container entrypoint override
 ```
+
+`CELERY_QUEUES` lists every queue the app sends tasks to — the worker consumes only those,
+and a task sent anywhere else waits in Redis forever. `init` writes
+`default,high_priority,low_priority`, the queues `app/core/background/celery_app.py`
+declares. An extra queue costs nothing; a missing one loses tasks silently. Add any other
+the app uses (look for `queue="…"`, `Queue("…")` and `task_routes` in the code), and
+`celery`, Celery's own default, if the app sets no `task_default_queue`.
 
 No Celery? Leave `CELERY_APP` empty and set `WITH_BEAT=false` in your config — the worker
 and scheduler services then disappear from the compose file.
@@ -197,7 +214,13 @@ Three ways to supply them, in increasing convenience:
 1. Write `KEY=value` lines into `config/app.<env>.env`.
 2. Put non-secret ones in `config/<env>.env` and reference them in the template.
 3. Declare them in `project/fields.toml` and manage them from the control panel, which
-   writes `config/app.<env>.env` for you.
+   writes `config/app.<env>.env` for you. A field is enough: the key does not have to be in
+   the template too.
+
+Which keys? `deployctl validate`, and the panel's problem list, name every key your
+repository's `.env*.example` files leave blank that the deployed `.env` would not set. For
+one production does not need, add it here commented out — `# SENTRY_DSN=` — and it stops
+asking.
 
 ---
 
@@ -224,7 +247,8 @@ secret = true                 # never sent back to the browser
 ```
 
 `target` picks the destination file: `common` → `config/common.env`, `env` →
-`config/<env>.env`, `app` → `config/app.<env>.env`. Types: `text`, `password`, `number`,
+`config/<env>.env`, `app` → `config/app.<env>.env`. In `project/fields.toml` it defaults to
+`app`. Types: `text`, `password`, `number`,
 `select` (with `options`), `textarea`.
 
 Adding a field is a change to this file only. No Python.

@@ -174,16 +174,21 @@ async def project_new(request: Request):
                                       "letters, digits and hyphens.")
 
     values = {key: str(form.get(key) or "").strip() for key in scaffold.INIT_KEYS
-              if key not in ("CELERY_APP", "WITH_BEAT") and str(form.get(key) or "").strip()}
+              if key not in ("CELERY_APP", "CELERY_QUEUES", "WITH_BEAT") and str(form.get(key) or "").strip()}
     values["HOSTS"] = " ".join(values.get("HOSTS", "").replace(",", " ").split())
     if mode == "cluster":
         values.pop("ACME_EMAIL", None)  # the load balancer holds the certificate
     if form.get("celery") == "on":
         values["CELERY_APP"] = str(form.get("CELERY_APP") or "").strip()
+        # One comma-separated word for the worker's --queues=: a space would split it.
+        values["CELERY_QUEUES"] = ",".join(str(form.get("CELERY_QUEUES") or "").replace(",", " ").split())
         if not values["CELERY_APP"]:
             return _result(request, error="Name the app's Celery app — or untick “The app runs Celery”.")
+        if not values["CELERY_QUEUES"]:
+            return _result(request, error="List the Celery queues the app sends tasks to, under “Your app — how it runs” "
+                                          "— the worker consumes only those. Or untick “The app runs Celery”.")
     else:
-        values |= {"CELERY_APP": "", "WITH_BEAT": "false"}
+        values |= {"CELERY_APP": "", "CELERY_QUEUES": "", "WITH_BEAT": "false"}
     missing = [key for key in _REQUIRED if not values.get(key)]
     if missing:
         return _result(request, error=f"Still needed: {', '.join(missing)}.")

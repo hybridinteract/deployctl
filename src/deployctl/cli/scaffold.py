@@ -195,7 +195,13 @@ MIGRATE_CMD=alembic upgrade head
 # ---------- Background work ----------
 # Leave CELERY_APP empty and set WITH_BEAT=false if the app has no Celery.
 CELERY_APP=app.core.background.celery_app
-CELERY_QUEUES=default
+# Every queue the app sends tasks to, comma-separated: the worker consumes only
+# these, and a task sent anywhere else waits in Redis forever. These three are the
+# ones app/core/background/celery_app.py declares (task_default_queue="default").
+# An extra queue costs nothing; a missing one loses tasks silently — so add any
+# other the app uses (look for queue="…" in the code), and `celery` if it sets no
+# task_default_queue.
+CELERY_QUEUES=default,high_priority,low_priority
 # Optional entrypoint override for the worker containers. If yours waits for
 # Redis with `redis-cli ping`, remember that a TLS-only managed Redis needs
 # --tls or the wait never returns and the worker never starts.
@@ -230,32 +236,29 @@ APP_ENV_STUB = """\
 # Project-owned application environment.
 #
 # Appended to every generated .env.<env> after deployctl's own block. Put the
-# keys YOUR app needs here — third-party API keys, feature flags, tuning.
+# keys YOUR app needs here that have a default, or a value built from the
+# config with any config key, e.g. {{ API_DOMAIN }} or {{ ENV }}.
 #
-# Values can be templated with any config key, e.g. {{ API_DOMAIN }} or
-# {{ ENV }}. Leave a secret empty here and set it in the control panel (or in
-# config/app.<env>.env): a value set there replaces the one rendered here on
-# every setup, so it survives regenerates and never has to be committed.
+# Secrets do not belong here: add a field for each to project/fields.toml and
+# set it in the control panel. It is saved in config/app.<env>.env, never
+# committed, and replaces whatever this file renders for the key.
+#
+# `deployctl validate` names the keys your .env.example leaves blank that the
+# deployed .env would not set. For one production does not need, list it here
+# commented out (# KEY=) and validate stops asking.
 # ============================================================================
 
-# -------- Example: object storage --------
-# S3_BUCKET_NAME=
-# S3_REGION=
-# S3_ENDPOINT_URL=
-# S3_ACCESS_KEY_ID=
-# S3_SECRET_ACCESS_KEY=
-
-# -------- Example: error tracking --------
-# SENTRY_DSN=
+# -------- Example: a value built from the config --------
 # SENTRY_ENVIRONMENT={{ ENV }}
 """
 
 FIELDS_STUB = """\
-# Control-panel form metadata for the keys in app.env.template.
+# The control panel's form for the application's own keys.
 #
-# Every key listed here gets an input in the panel's Configure tab and is written
-# into config/app.<env>.env, surviving regenerates. Keys must match
-# app.env.template. Adding a field is a change to this file only — no Python.
+# Every key listed here gets an input in the panel's Configure tab; its value is
+# saved to config/app.<env>.env and written into the app's .env on every deploy.
+# Adding a field is a change to this file only. A key needs a line in
+# app.env.template too only for a default or a value built from the config.
 
 [[section]]
 id = "appsecrets"
@@ -314,6 +317,7 @@ INIT_KEYS = {
     "HEALTH_PATH": "project",
     "MIGRATE_CMD": "project",
     "CELERY_APP": "project",
+    "CELERY_QUEUES": "project",
     "WITH_BEAT": "project",
     "DOCKERFILE": "project",
     "BUILD_CONTEXT": "project",

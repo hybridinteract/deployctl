@@ -1,4 +1,4 @@
-# Control-panel inputs for the keys in app.env.template. Keys must match it.
+# Control-panel inputs for the app's own keys, saved to config/app.<env>.env. A field alone is enough.
 
 [[section]]
 id = "observability"

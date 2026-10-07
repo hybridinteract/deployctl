@@ -19,11 +19,26 @@ from .config import Config, ConfigError, load
 
 
 def resolve_env(explicit: str | None) -> str:
-    """Decide which environment a command applies to."""
-    if explicit:
-        return explicit
+    """Decide which environment a command applies to — one that is configured.
+
+    A named environment must have its ``config/<env>.env``. Without it every value
+    falls back to a default, so a command run from the wrong directory acts on an
+    empty configuration instead of failing: a bootstrap script printed that way
+    had ``REMOTE_DIR=""`` and left a server half-prepared.
+    """
+    if not paths.is_project_root(paths.ROOT):
+        ui.error(f"no deployctl project here — {paths.ROOT} has no project/project.env")
+        ui.hint("run it inside the application's repository, or pass --project-dir <deploy directory>")
+        raise typer.Exit(2)
 
     known = paths.known_environments()
+    if explicit:
+        if explicit in known:
+            return explicit
+        ui.error(f"no environment '{explicit}' in this project — configured: {', '.join(known) or 'none'}")
+        ui.hint("create it with: deployctl init --mode single|cluster --env " + explicit)
+        raise typer.Exit(2)
+
     if len(known) == 1:
         ui.debug(f"only one environment configured, using '{known[0]}'")
         return known[0]

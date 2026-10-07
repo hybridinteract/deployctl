@@ -14,7 +14,7 @@ import dataclasses
 
 from deployctl.cli import config as cli_config
 from deployctl.cli import fields as cli_fields
-from deployctl.cli import paths, snapshots
+from deployctl.cli import checks, paths, snapshots
 from deployctl.cli.envfile import patch_env_file, read_env_file
 
 
@@ -193,7 +193,7 @@ def bootstrap(env: str) -> dict:
 def summary(env: str) -> dict:
     """The environment as configured: the page's fixed facts, and what validation says."""
     cfg = load(env)
-    problems = cfg.validate()
+    problems = cfg.validate() + checks.app_env_checks(cfg)
     return {
         "env": env,
         "mode": cfg.mode,

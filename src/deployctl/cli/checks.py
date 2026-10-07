@@ -17,8 +17,11 @@ import pathlib
 import re
 import subprocess
 
+import jinja2
+
 from . import paths, render
 from .config import Config, Problem
+from .envfile import read_env_file
 
 
 def _read(path: pathlib.Path) -> str:
@@ -96,6 +99,57 @@ def ci_workflow_checks(cfg: Config) -> list[Problem]:
                 "deployctl ci init --force (pass --branch to keep the current trigger)",
             )
         )
+    return problems
+
+
+_COMMENTED_KEY = re.compile(r"^\s*#\s*([A-Za-z_][A-Za-z0-9_]*)=", re.MULTILINE)
+
+
+def app_env_checks(cfg: Config) -> list[Problem]:
+    """The app's own keys the deployed ``.env`` would leave out, read from ``.env*.example``.
+
+    A key an example file leaves blank is one the app expects somebody to supply;
+    one with a value there is a default the app already has, so it stays quiet.
+    herbally's object-storage keys were exactly the blank ones: the app booted,
+    passed the health gate, and failed on its first upload.
+
+    A key counts as supplied when the template renders a value for it or
+    ``config/app.<env>.env`` sets one. ``# KEY=`` in the template marks one that
+    production does not need. Called by ``validate`` and the control panel — not by
+    :func:`artifact_checks`, which ``selftest`` reuses without a real repository.
+    """
+    problems: list[Problem] = []
+    try:
+        owned, declared = render.app_env_layers(cfg)
+    except jinja2.TemplateError as exc:  # setup reports it in full; here, say it rather than crash the panel
+        return [Problem("warn", f"project/app.env.template does not render: {exc}")]
+    stored = read_env_file(paths.app_values_file(cfg.env))
+
+    # A value deployctl writes itself is not replaced from config/app.<env>.env (render._app_values).
+    ignored = sorted(k for k, v in stored.items() if v and k in owned and k not in declared)
+    if ignored:
+        problems.append(Problem(
+            "warn",
+            f"config/app.{cfg.env}.env sets {', '.join(ignored)}, which deployctl writes itself — ignored",
+            "remove it there; deployctl's own value (database, Redis, generated secrets) is what ships",
+        ))
+
+    roots = {paths.REPO_ROOT, pathlib.Path(cfg.derived["BUILD_CONTEXT_ABS"])}
+    examples = sorted({p for root in roots for p in root.glob(".env*.example") if p.is_file()})
+    blank = {path.name: {k for k, v in read_env_file(path).items() if not v} for path in examples}
+    template = _read(paths.PROJECT_APP_ENV_TEMPLATE)
+    supplied = {k for k, v in declared.items() if v} | {k for k, v in stored.items() if v}
+    missing = sorted(set().union(*blank.values()) - set(owned) - supplied - set(_COMMENTED_KEY.findall(template)))
+    if missing:
+        them = "it" if len(missing) == 1 else "them"
+        named = [name for name, keys in blank.items() if keys & set(missing)]
+        problems.append(Problem(
+            "warn",
+            f"{', '.join(named)} leave{'s' if len(named) == 1 else ''} "
+            f"{', '.join(missing)} blank for you to fill in, and the deployed .env does not set {them}",
+            f"add a field for each to project/fields.toml and set {them} in the panel's Configure tab — "
+            f"or, for one production does not need, a line `# KEY=` in project/app.env.template",
+        ))
     return problems
 
 

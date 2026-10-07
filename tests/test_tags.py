@@ -113,3 +113,21 @@ def test_validate_checks_the_files_against_the_tag_they_were_rendered_with(cfg):
     assert "image tag 8e3e648" in checked.output
     assert "does not reference" not in checked.output
     assert checked.exit_code in (0, 2), checked.output
+
+
+def test_image_tags_lists_the_registry_and_marks_the_deployed_tag(cfg, monkeypatch):
+    """The command is itself named `tags`; it must still reach the tags module."""
+    from typer.testing import CliRunner
+
+    from deployctl.cli import registry
+    from deployctl.cli.main import app
+
+    found = [registry.Tag("bbb2222", "2026-09-02T00:00:00Z", "1d ago"),
+             registry.Tag("aaa1111", "2026-09-01T00:00:00Z", "2d ago")]
+    monkeypatch.setattr(registry, "fetch_tags", lambda repo, token, limit=10: (found, None))
+    cfg()
+    tags.remember("production", "aaa1111")
+    result = CliRunner().invoke(app, ["image", "tags", "--env", "production"])
+    assert result.exit_code == 0, result.output
+    assert "bbb2222" in result.output and "(newest)" in result.output
+    assert "aaa1111" in result.output and "(deployed)" in result.output

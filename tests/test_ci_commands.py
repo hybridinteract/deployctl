@@ -146,6 +146,18 @@ def test_the_projects_own_ci_yml_is_never_overwritten(repo):
     assert "does not call" in result.output and "uses: ./.github/workflows/deploy.yml" in result.output
 
 
+def test_a_hand_written_workflow_is_never_replaced_even_with_force(repo):
+    """herbally's own build-image.yml fed another deployment; Regenerate replaced it unseen."""
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "build-image.yml").write_text("name: mine\non: push\n")
+    result = _cli("init", "--env", "production", "--force")
+    assert result.exit_code == 1
+    assert (wf / "build-image.yml").read_text() == "name: mine\non: push\n"
+    assert "not written by deployctl" in result.output and "move it aside" in result.output
+    assert "Managed by deployctl" in (wf / "deploy.yml").read_text()  # the other one is still written
+
+
 # ---- ci pin-hosts ----------------------------------------------------------------------
 
 
@@ -313,6 +325,30 @@ def test_doctor_is_green_when_everything_is_in_place(repo, monkeypatch):
     assert auto["value"] == "on"
 
 
+def test_doctor_asks_for_setup_before_anything_ci_side(repo, monkeypatch):
+    """Before setup there are no secrets to upload: the CI key and host pins would come first for nothing."""
+    paths.secrets_file("production").unlink()
+    result = _cli("doctor", "--env", "production")
+    assert result.exit_code == 1
+    assert "Set up this environment first" in result.output and "deployctl setup --env production" in result.output
+    doc = json.loads(_cli("doctor", "--env", "production", "--json").stdout)
+    assert [item["id"] for item in doc["items"]] == ["github", "setup"]
+
+
+def test_doctor_offers_no_regenerate_for_a_hand_written_workflow(repo, monkeypatch):
+    from deployctl.webui.panel.actions import ci_fix
+
+    monkeypatch.setattr(github, "secret_names", lambda scope: set())
+    monkeypatch.setattr(github, "variables", lambda scope: {})
+    monkeypatch.setattr(github, "gh", lambda args, stdin=None: subprocess.CompletedProcess(args, 0, "PUBLIC\n", ""))
+    _cli("init", "--env", "production")
+    (repo / ".github" / "workflows" / "build-image.yml").write_text("name: mine\n")
+    doc = json.loads(_cli("doctor", "--env", "production", "--json").stdout)
+    item = next(item for item in doc["items"] if item["id"] == "workflow:build-image.yml")
+    assert item["value"] == "hand-written" and "--force" not in item["fix"]
+    assert ci_fix(item) is None
+
+
 # ---- ci deploy / runs / auto-deploy ----------------------------------------------------
 
 
@@ -403,6 +439,36 @@ def test_a_fleet_behind_a_load_balancer_gets_its_own_firewall_advice(repo, write
 
 def test_a_nonsense_swap_size_is_refused(repo):
     assert CliRunner().invoke(app, ["server", "bootstrap-script", "--env", "production", "--swap", "lots"]).exit_code == 2
+
+
+def test_outside_a_project_no_script_is_printed(repo, tmp_path, monkeypatch):
+    """Run from ~ it printed a script with REMOTE_DIR="" that died halfway through a server."""
+    monkeypatch.setattr(paths, "ROOT", tmp_path / "elsewhere" / "deploy")
+    result = CliRunner().invoke(app, ["server", "bootstrap-script", "--env", "production"])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "no deployctl project here" in result.stderr
+
+
+def test_an_environment_without_a_config_file_is_refused(repo):
+    result = CliRunner().invoke(app, ["server", "bootstrap-script", "--env", "staging"])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "no environment 'staging'" in result.stderr and "configured: production" in result.stderr
+
+
+def test_the_script_itself_stops_before_step_1_without_a_directory(repo, tmp_path):
+    from deployctl.cli.commands.server import render_bootstrap
+
+    cfg = config.load("production")
+    cfg.derived["REMOTE_DIR"] = cfg.raw["REMOTE_DIR"] = ""
+    script = render_bootstrap(cfg).replace('EXTRA_AUTHORIZED_KEYS=""', 'EXTRA_AUTHORIZED_KEYS="ssh-ed25519 AAAA test"')
+    # Only the preflight runs — nothing of a real bootstrap reaches this machine.
+    path = tmp_path / "preflight.sh"
+    path.write_text(script[:script.index("# 1. Update the system")])
+    proc = subprocess.run(["bash", str(path)], capture_output=True, text=True)
+    assert proc.returncode == 1
+    assert "REMOTE_DIR must be an absolute path" in proc.stderr
 
 
 # ---- CI's own registry login (0.13) ------------------------------------------------------

@@ -43,7 +43,7 @@ def validate(
                 f"(render with: deployctl setup --env {cfg.env} --tag <tag>)")
     print()
 
-    errors, warnings = _report("Configuration", cfg.validate())
+    errors, warnings = _report("Configuration", cfg.validate() + checks.app_env_checks(cfg))
     print()
     a_err, a_warn = _report("Artifacts", checks.artifact_checks(cfg, run_docker=not skip_docker))
     errors += a_err

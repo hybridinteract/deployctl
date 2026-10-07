@@ -111,7 +111,7 @@ def _parse_guide(path: pathlib.Path, rf: dict) -> Guide | None:
     )
 
 
-def _parse(path: pathlib.Path) -> list[Section]:
+def _parse(path: pathlib.Path, default_target: str = "env") -> list[Section]:
     if not path.is_file():
         return []
     try:
@@ -125,7 +125,7 @@ def _parse(path: pathlib.Path) -> list[Section]:
         for rf in raw.get("field", []):
             if "key" not in rf:
                 raise FieldsError(f"{path}: a field in section '{raw.get('id', '?')}' has no key")
-            target = rf.get("target", "env")
+            target = rf.get("target", default_target)
             if target not in VALID_TARGETS:
                 raise FieldsError(f"{path}: field {rf['key']} has target={target!r}, expected one of {VALID_TARGETS}")
             ftype = rf.get("type", "text")
@@ -163,16 +163,18 @@ def load(mode: str) -> list[Section]:
     """All sections that apply to a deployment mode, in display order.
 
     Tool sections come first (``webui/fields/core.toml`` then the mode-specific
-    file), the project's own section last.
+    file), the project's own section last. A project field is an application key
+    unless it says otherwise: without ``target = "app"`` one used to be saved into
+    config/<env>.env, which never reaches the app.
     """
     files = [
-        paths.WEBUI_DIR / "fields" / "core.toml",
-        paths.WEBUI_DIR / "fields" / f"{mode}.toml",
-        paths.PROJECT_FIELDS,
+        (paths.WEBUI_DIR / "fields" / "core.toml", "env"),
+        (paths.WEBUI_DIR / "fields" / f"{mode}.toml", "env"),
+        (paths.PROJECT_FIELDS, "app"),
     ]
     sections: list[Section] = []
-    for path in files:
-        for section in _parse(path):
+    for path, default_target in files:
+        for section in _parse(path, default_target):
             if mode in section.modes:
                 sections.append(section)
     return sections

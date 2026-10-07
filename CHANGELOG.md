@@ -3,6 +3,67 @@
 Versions are git tags (`vX.Y.Z`); projects install one with
 `uv tool install git+https://github.com/hybridinteract/deployctl@vX.Y.Z`.
 
+## 0.14.1
+
+Fixes from taking a second project (herbally) to its first server: things that failed late,
+silently, or by overwriting something, now fail early and say why.
+
+**Fixed**
+- `deployctl image tags` crashed with `'function' object has no attribute 'cached'` after
+  listing the registry.
+- **A command run outside a project, or for an environment with no `config/<env>.env`, now
+  stops.** It used to carry on with defaults: `server bootstrap-script --env production`
+  run from `~` printed a script with `REMOTE_DIR=""` that installed Docker and the deploy
+  user, then died at step 4. The script itself now also refuses an empty user or directory
+  before it changes anything, and its stdout is only ever the script.
+- **`ci init --force` never replaces a workflow deployctl did not write** (one without the
+  `# Managed by deployctl` header). It replaced herbally's own `build-image.yml` unseen.
+  `ci doctor` and the panel now say "move it aside" instead of offering Regenerate.
+- **CI/CD waits for Setup.** Until `setup` has created the environment's secrets, `ci doctor`,
+  and so the panel's CI/CD tab, shows one row, "Set up this environment first", instead of
+  steps that change the server and GitHub before CI could deploy anything.
+- **An application key that was set always reaches the app.** A value in
+  `config/app.<env>.env` was dropped at render unless `project/app.env.template` declared
+  the key too, and a field in `project/fields.toml` without `target = "app"` was saved
+  where the app never sees it. Now a field alone is enough, as the scaffold always said.
+  deployctl's own keys (database, Redis, generated secrets) still cannot be replaced from
+  there; validate says when one is set.
+
+**Fails early now**
+- **The worker consumes every queue the app's background module declares.** `init` used to
+  write `CELERY_QUEUES=default`: the worker consumed one queue, and every task routed
+  elsewhere waited in Redis forever (20 of influen's 24 tasks; herbally's `low_priority`).
+  It now writes `default,high_priority,low_priority`, the three queues
+  `app/core/background/celery_app.py` declares. An extra queue costs nothing; a missing one
+  loses tasks. The New project form shows the list to edit, and validation is an error when
+  the app runs Celery and no queues are listed.
+- **Missing application keys are named.** `validate` and the panel's problem list warn about
+  every key your repository's `.env*.example` files leave blank that the deployed `.env`
+  would not set. For herbally that was exactly its four object-storage keys: the app booted,
+  passed the health gate, and would have failed on its first upload. A key production does
+  not need goes in `project/app.env.template` as `# KEY=`.
+
+**Also**
+- The Configure tab explains an empty *Application secrets* section instead of showing a
+  bare heading.
+- Docs: `40-ADOPTING` explains when an image that migrates on start actually hurts (a
+  rollback; `MIGRATE_CMD` left empty), and that a field alone declares an app key.
+
+**Upgrading**
+
+```bash
+uv tool install --force git+https://github.com/hybridinteract/deployctl@v0.14.1
+deployctl validate --env production
+```
+
+- Existing projects keep their own `CELERY_QUEUES`. One whose `project/project.env` sets
+  `CELERY_APP` but has no `CELERY_QUEUES` line now stops at validation: list the queues
+  there. Every scaffolded project has the line.
+- Keys set in `config/app.<env>.env` that the template does not declare are now written into
+  the app's `.env`, under their own heading, on the next `setup` or deploy.
+- A `project/fields.toml` field without a `target` now writes to `config/app.<env>.env`.
+  Give it `target = "env"` if it really is a deployctl setting.
+
 ## 0.14.0
 
 One console for all your projects: a person sets up once — their GitHub login — then adds

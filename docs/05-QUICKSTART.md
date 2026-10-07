@@ -12,7 +12,7 @@ command it runs.
 ## 1 · Install the tool
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.1
 deployctl --version
 ```
 
@@ -147,7 +147,7 @@ Then **Redeploy what's running** once, to prove it, and turn automatic deploys o
 Every button above is a command. Use these for scripting, CI, or an audit trail:
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.1   # once per machine
 gh auth login && deployctl access                                           # once per machine
 deployctl init --mode single --env production    # in the repository; creates deploy/
 $EDITOR deploy/config/common.env                 # project name, domain, image repo

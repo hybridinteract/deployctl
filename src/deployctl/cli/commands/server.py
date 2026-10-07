@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sys
 
@@ -67,7 +68,10 @@ def bootstrap_script(
     if not re.fullmatch(r"\d+[MG]", swap):
         print("deployctl: --swap takes a size like 2G or 1024M", file=sys.stderr)
         raise typer.Exit(2)
-    cfg = load_config(env, require_valid=False)
+    # Anything said while loading — a hint, a debug line — goes to stderr: stdout is
+    # piped into bash on the server.
+    with contextlib.redirect_stdout(sys.stderr):
+        cfg = load_config(env, require_valid=False)
     sys.stdout.write(render_bootstrap(cfg, swap=swap, harden_ssh=harden_ssh, reboot=reboot))
     print(f"# ↑ run once as root on each new server for '{cfg.env}'; then: ssh {cfg.raw['SSH_USER']}@<ip> docker ps",
           file=sys.stderr)

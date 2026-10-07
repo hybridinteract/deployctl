@@ -15,6 +15,7 @@ APP_MODULE=app.main:app
 HEALTH_PATH=/health
 MIGRATE_CMD=alembic upgrade head
 CELERY_APP=app.worker.celery_app
+CELERY_QUEUES=default
 """
 
 

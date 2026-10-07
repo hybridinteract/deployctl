@@ -21,7 +21,7 @@ import shutil
 
 import jinja2
 
-from . import paths
+from . import paths, secrets
 from .config import Config
 from .envfile import assignment_key, parse_env_text, patch_env_file, quote_value, read_env_file, write_env_file
 
@@ -92,7 +92,12 @@ def _write(path: pathlib.Path, content: str) -> pathlib.Path:
 
 
 def _app_values(cfg: Config, project_keys: set[str], fresh: dict[str, str]) -> dict[str, str]:
-    """The project keys an operator has set, from ``config/app.<env>.env``.
+    """The application keys an operator has set, from ``config/app.<env>.env`` — all of them.
+
+    A key the template does not declare still ships: a field in project/fields.toml
+    is enough to set one. Only the keys deployctl writes itself (the database,
+    Redis, generated secrets — base.env.j2) cannot be replaced from here unless the
+    template declares them too; ``checks.app_env_checks`` says when one is set.
 
     Those values used to be written into the rendered ``.env.<env>`` itself and
     carried from one render to the next — so the only copy of the app's API keys
@@ -114,7 +119,26 @@ def _app_values(cfg: Config, project_keys: set[str], fresh: dict[str, str]) -> d
     if adopt:
         patch_env_file(path, adopt)
         stored.update(adopt)
-    return {key: value for key, value in stored.items() if key in project_keys and value}
+    return {key: value for key, value in stored.items() if value and (key in project_keys or key not in fresh)}
+
+
+def _project_block(ctx: dict) -> str:
+    """``project/app.env.template`` rendered for one environment; empty without one."""
+    if not paths.PROJECT_APP_ENV_TEMPLATE.is_file():
+        return ""
+    return environment().get_template(paths.PROJECT_APP_ENV_TEMPLATE.name).render(**ctx)
+
+
+def app_env_layers(cfg: Config) -> tuple[dict[str, str], dict[str, str]]:
+    """What ``.env.<env>`` is built from before the operator's own values: deployctl's
+    block (``base.env.j2``) and the project's template, each rendered and parsed.
+
+    Reads only — unlike a render, nothing is written, adopted or minted. A secret
+    setup has not minted yet renders as a stand-in: the keys are what matter here.
+    """
+    unminted = {key: "not-minted-yet" for key in secrets.pinned(cfg) if not cfg.raw.get(key)}
+    ctx = cfg.ctx(**unminted)
+    return parse_env_text(render_text("env/base.env.j2", ctx)), parse_env_text(_project_block(ctx))
 
 
 def _render_app_env(cfg: Config) -> str:
@@ -126,11 +150,10 @@ def _render_app_env(cfg: Config) -> str:
     would silently blank every other one.
     """
     ctx = cfg.ctx()
-    project_block = ""
+    project_block = _project_block(ctx)
     parts = [render_text("env/base.env.j2", ctx)]
 
     if paths.PROJECT_APP_ENV_TEMPLATE.is_file():
-        project_block = environment().get_template(paths.PROJECT_APP_ENV_TEMPLATE.name).render(**ctx)
         parts.append("\n" + project_block)
 
     rendered = "\n".join(parts)
@@ -160,13 +183,11 @@ def _render_app_env(cfg: Config) -> str:
         else:
             out.append(line)
 
-    # A key the template no longer declares cannot reach this point (it would
-    # not be in project_keys), but appending rather than dropping keeps the
-    # guarantee unconditional: a value that was set is never silently lost.
+    # Keys the template does not declare: set in the panel or in the file directly.
     if remaining:
         out += [
             "",
-            "# ---- preserved from the previous .env by deployctl ----",
+            f"# ---- set in config/app.{cfg.env}.env, not declared in project/app.env.template ----",
             *(f"{k}={quote_value(v)}" for k, v in sorted(remaining.items())),
         ]
     return "\n".join(out) + "\n"

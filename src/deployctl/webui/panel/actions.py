@@ -332,8 +332,8 @@ def ci_fix(item: Mapping) -> str | None:
         return "ci-auto-off" if item.get("value") == "on" else "ci-auto-on"
     if key == "ssh-key":
         return "ci-rotate-key" if status == "ok" else "ci-setup-key"
-    if status == "ok":
-        return None
+    if status == "ok" or item.get("value") == "hand-written":
+        return None  # nothing to press: a workflow deployctl did not write is moved aside by a person
     if key in ("workflow:build-image.yml", "workflow:deploy.yml"):
         return "ci-init-force" if status == "warn" else "ci-init"
     return _CI_FIXES.get(key)

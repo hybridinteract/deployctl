@@ -149,7 +149,7 @@ validation re-runs after every Save.
 | **Redis** | Single: `container`. Cluster: the managed instance's host, port and password, over TLS (`REDIS_SSL`). |
 | **Runtime** | `API_WORKERS` and `CELERY_WORKERS` (processes), their memory limits, `LOG_LEVEL`, and `ENABLE_DOCS` (the API docs, behind a login — see [30-OPERATIONS.md](30-OPERATIONS.md#docs-access)). Validation warns when the processes cannot fit in the memory limit. |
 | **Continuous deployment** | `DEPLOY_BRANCH`: the branch whose pushes deploy, once CI/CD is on. |
-| **Application secrets** | Your application's own keys, declared in `project/fields.toml` (API keys, mail credentials…). They are saved to `config/app.<env>.env` and written into the app's `.env` on every deploy. |
+| **Application secrets** | Your application's own keys (API keys, object storage, mail credentials…): one field per key in `project/fields.toml`. They are saved to `config/app.<env>.env`, which appears on the first Save, and written into the app's `.env` on every deploy. Validation names the keys your `.env.example` leaves blank that the deployed `.env` would not set. |
 
 Password fields are never sent back to the page: a saved one shows a *saved* badge, and
 submitting it empty keeps it.
