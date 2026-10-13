@@ -3,6 +3,40 @@
 Versions are git tags (`vX.Y.Z`); projects install one with
 `uv tool install git+https://github.com/hybridinteract/deployctl@vX.Y.Z`.
 
+## Unreleased
+
+**Added**
+- **A release branch: build on one branch, deploy from another.** `BUILD_BRANCH` (`ci init
+  --build-branch main`, or Configure → *Build branch*) says images are built on `main`, and
+  `DEPLOY_BRANCH=prod` that merging into `prod` ships. `build-image.yml` then publishes from
+  `main`, a new `ci.yml` checks and builds without deploying, and a third managed workflow,
+  `release.yml`, deploys the `main` commit `prod` matches once that commit's CI has passed.
+  This is herbally's hand-written `release.yml`, made a template — with it, the local edit to
+  `deploy.yml`'s branch check that `ci init --force` would drop is no longer needed. Empty
+  (the default), nothing changes.
+
+**Faster** (both from herbally's own edits, measured on its production deploys)
+- **CI deploys over one ssh connection per host.** `deploy.yml` sets `DEPLOYCTL_SSH_MUX=1`:
+  the engine opens a `ControlMaster` per host in a private `/tmp/dctl-mux.*` directory and
+  closes it on exit, error or cancel. Each handshake from a runner costs seconds and an
+  update makes dozens; herbally's deploy step went from ~350s to ~170s. herbally did this by
+  writing `~/.ssh/config` and `pkill`-ing the masters; the engine keeps it to its own
+  connections, so a self-hosted runner's ssh config is never touched.
+- **A new `ci.yml` builds the image while the checks run** (no `needs: checks` on `publish`);
+  the deploy job waits for both. An existing `ci.yml` is yours and keeps its order.
+
+**Fixed**
+- **CI/CD said "Finish CI/CD: .github/workflows/ci.yml" for a pipeline that deployed.**
+  `ci doctor` looked for the text `deploy.yml` in `ci.yml` alone; herbally calls it from
+  `release.yml`, so the panel's stepper never reached *Live*. Every workflow is now scanned
+  for the job that calls `deploy.yml`, and that job is the one checked for `packages: read` —
+  which now also accepts the inline `permissions: { contents: read, packages: read }` that
+  doctor's own fix suggests, `read-all`, and a workflow-level grant the job inherits.
+- **Deploys on merge were missing from `ci runs` and the panel's history** unless `ci.yml`
+  called the deploy. They are read from whichever workflow does, and the tag shown is the
+  image deployed (from the deploy job's name), not the commit pushed — the two differ for a
+  release, whose merge commit never had an image.
+
 ## 0.14.1
 
 Fixes from taking a second project (herbally) to its first server: things that failed late,

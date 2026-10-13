@@ -1,0 +1,116 @@
+# Managed by deployctl «VERSION» — regenerate with: deployctl ci init --force
+#
+# «DEPLOY_BRANCH» is the release branch. «BUILD_BRANCH» only checks and builds (ci.yml); a
+# push to «DEPLOY_BRANCH» — merging «BUILD_BRANCH» into it — deploys «ENV»:
+#
+#   push to «BUILD_BRANCH»   ci.yml: checks + image «IMAGE_REPO»:<short-sha>
+#   push to «DEPLOY_BRANCH»   here:   find the «BUILD_BRANCH» commit «DEPLOY_BRANCH» now matches, wait for its
+#                          CI run to pass, deploy that commit's image (deploy.yml)
+#
+# «DEPLOY_BRANCH» never builds an image of its own. A PR merge commit has a new SHA,
+# but its code is identical to the «BUILD_BRANCH» commit it merged, so it ships that
+# commit's image — the one the checks ran against. A «DEPLOY_BRANCH» whose code matches
+# no «BUILD_BRANCH» commit (a commit made on «DEPLOY_BRANCH» directly, a conflict resolved
+# in the merge) is refused: land the change on «BUILD_BRANCH» and merge again.
+#
+# The repository variable AUTO_DEPLOY must be 'true'. Set it to anything else
+# to pause releases: merges then deploy nothing.
+
+name: release
+
+on:
+  push:
+    branches: ["«DEPLOY_BRANCH»"]
+
+permissions:
+  contents: read
+
+# Merges in quick succession: one release at a time, the newest one next.
+# deploy.yml also takes a per-environment lock of its own.
+concurrency:
+  group: release-«DEPLOY_BRANCH»
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Find the image
+    if: vars.AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read  # gh run list: «BUILD_BRANCH»'s CI run for the commit
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+    steps:
+      - uses: actions/checkout@«ACTIONS.checkout» # «ACTIONS.checkout_version»
+        with:
+          # Full history and every branch: needs origin/«BUILD_BRANCH» and the merge's parents.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Candidates: HEAD itself (a fast-forward), a PR merge's second parent
+      # («BUILD_BRANCH»'s tip when merged), «BUILD_BRANCH»'s tip (a squash merge). The first
+      # that is on «BUILD_BRANCH» and has exactly «DEPLOY_BRANCH»'s code wins. HEAD goes
+      # first: on a fast-forward it is «BUILD_BRANCH»'s own merge commit, whose second
+      # parent is a feature branch tip that never got an image.
+      #
+      # The tag is the first 7 characters, as build-image.yml computes it in a
+      # one-commit checkout, where `--short=7` is in practice never longer.
+      - name: Match «DEPLOY_BRANCH» to a «BUILD_BRANCH» commit
+        id: source
+        env:
+          BUILD_REF: origin/«BUILD_BRANCH»
+        run: |
+          for ref in HEAD HEAD^2 "$BUILD_REF"; do
+            sha="$(git rev-parse -q --verify "$ref^{commit}")" || continue
+            git merge-base --is-ancestor "$sha" "$BUILD_REF" || continue
+            git diff --quiet "$sha" HEAD || continue
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            echo "tag=${sha:0:7}" >> "$GITHUB_OUTPUT"
+            echo "«DEPLOY_BRANCH» $(git rev-parse --short HEAD) has the code of «BUILD_BRANCH» ${sha:0:7}"
+            exit 0
+          done
+          echo "::error::«DEPLOY_BRANCH»'s code matches no commit on «BUILD_BRANCH» — commit the change to «BUILD_BRANCH», then merge «BUILD_BRANCH» into «DEPLOY_BRANCH»"
+          exit 1
+
+      # Nothing ships that did not pass its checks and publish. Merging right
+      # after «BUILD_BRANCH» means that run is often still going: wait for it.
+      - name: Wait for «BUILD_BRANCH»'s CI on that commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          while :; do
+            run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push \
+              --branch "«BUILD_BRANCH»" --commit "$SHA" --limit 1 --json status,conclusion,url --jq '.[0] // {}')"
+            status="$(jq -r '.status // "missing"' <<< "$run")"
+            url="$(jq -r '.url // ""' <<< "$run")"
+            if [[ "$status" == completed ]]; then
+              conclusion="$(jq -r .conclusion <<< "$run")"
+              [[ "$conclusion" == success ]] && { echo "«BUILD_BRANCH»'s CI passed: $url"; exit 0; }
+              echo "::error::«BUILD_BRANCH»'s CI for ${SHA:0:7} ended '$conclusion' — fix «BUILD_BRANCH», then merge again: $url"
+              exit 1
+            fi
+            if [[ "$status" == missing ]] && (( SECONDS > 120 )); then
+              echo "::error::no CI run on «BUILD_BRANCH» for ${SHA:0:7}, so no image — was it pushed to «BUILD_BRANCH»?"
+              exit 1
+            fi
+            (( SECONDS < 1200 )) || { echo "::error::«BUILD_BRANCH»'s CI for ${SHA:0:7} still '$status' after 20 minutes: $url"; exit 1; }
+            echo "«BUILD_BRANCH»'s CI for ${SHA:0:7}: $status — waiting"
+            sleep 20
+          done
+
+  deploy:
+    name: Deploy to «ENV»
+    needs: resolve
+    # A called workflow gets no more than this job grants: packages: read lets the
+    # deploy pull the image with the run's own token.
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: «ENV»
+      tag: ${{ needs.resolve.outputs.tag }}
+    secrets: inherit

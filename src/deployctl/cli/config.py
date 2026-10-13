@@ -114,6 +114,10 @@ DEFAULTS = {
     "CI_SCOPE": "",
     # The branch whose pushes build and, with AUTO_DEPLOY on, deploy.
     "DEPLOY_BRANCH": "main",
+    # Set when images are built on another branch than the one that deploys: pushes
+    # here run the checks and publish, and merging it into DEPLOY_BRANCH releases
+    # that image (release.yml). Empty: DEPLOY_BRANCH does both.
+    "BUILD_BRANCH": "",
     "WITH_BEAT": "true",
     "ENABLE_DOCS": "false",
     "LOG_LEVEL": "WARNING",
@@ -415,6 +419,8 @@ class Config:
                 "deployctl ci connect detects the right one")
         if not re.fullmatch(r"[A-Za-z0-9._/-]+", raw["DEPLOY_BRANCH"]):
             err(f"DEPLOY_BRANCH {raw['DEPLOY_BRANCH']!r} is not a branch name")
+        if raw["BUILD_BRANCH"] and not re.fullmatch(r"[A-Za-z0-9._/-]+", raw["BUILD_BRANCH"]):
+            err(f"BUILD_BRANCH {raw['BUILD_BRANCH']!r} is not a branch name")
         if raw["REVERT_SCOPE"] not in ("fleet", "host"):
             err(f"REVERT_SCOPE must be 'fleet' or 'host' (got {raw['REVERT_SCOPE']!r})")
         if raw["SSH_JUMP_HOST"] and not re.fullmatch(r"[A-Za-z0-9@._:\[\]-]+(,[A-Za-z0-9@._:\[\]-]+)*", raw["SSH_JUMP_HOST"]):

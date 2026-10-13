@@ -148,7 +148,7 @@ validation re-runs after every Save.
 | **PostgreSQL** | Single: `container` (default; the password is generated once into `config/secrets.<env>.env` and reused forever), or `external` with `POSTGRES_HOST`, `POSTGRES_PASSWORD` and `DB_SSL_MODE=require`. Cluster: the managed database's host, port, name, user, password and SSL mode — and every host must be in the database's trusted sources. |
 | **Redis** | Single: `container`. Cluster: the managed instance's host, port and password, over TLS (`REDIS_SSL`). |
 | **Runtime** | `API_WORKERS` and `CELERY_WORKERS` (processes), their memory limits, `LOG_LEVEL`, and `ENABLE_DOCS` (the API docs, behind a login — see [30-OPERATIONS.md](30-OPERATIONS.md#docs-access)). Validation warns when the processes cannot fit in the memory limit. |
-| **Continuous deployment** | `DEPLOY_BRANCH`: the branch whose pushes deploy, once CI/CD is on. |
+| **Continuous deployment** | `DEPLOY_BRANCH`: the branch whose pushes deploy, once CI/CD is on. `BUILD_BRANCH`, only when images are built on another branch that is then merged into it (see [a release branch](35-CONTINUOUS-DEPLOYMENT.md#a-release-branch)). |
 | **Application secrets** | Your application's own keys (API keys, object storage, mail credentials…): one field per key in `project/fields.toml`. They are saved to `config/app.<env>.env`, which appears on the first Save, and written into the app's `.env` on every deploy. Validation names the keys your `.env.example` leaves blank that the deployed `.env` would not set. |
 
 Password fields are never sent back to the page: a saved one shows a *saved* badge, and
@@ -303,8 +303,8 @@ each row with the button that fixes it. In order:
 | Prove it | `deployctl ci deploy --env production` | Redeploys what runs, through GitHub, end to end. |
 | Deploy on merge | `deployctl ci auto-deploy on --env production` | Every push to the deploy branch now builds and deploys. |
 
-CI pulls the image with its own short-lived token. `ci.yml`'s `deploy:` job must grant
-`packages: read` for that; `ci doctor` checks it. Why each step, and what to do when GitHub
+CI pulls the image with its own short-lived token. The job that calls the deploy (`ci.yml`'s
+`deploy:`, or `release.yml`'s) must grant `packages: read` for that; `ci doctor` checks it. Why each step, and what to do when GitHub
 is the thing that is broken: [35-CONTINUOUS-DEPLOYMENT.md](35-CONTINUOUS-DEPLOYMENT.md).
 
 Once CI/CD is on, the panel opens on **Operate**: what runs and who shipped it, deploying or

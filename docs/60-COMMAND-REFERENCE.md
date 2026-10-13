@@ -210,7 +210,7 @@ private repository) or `repository` (every plan). A private repository on GitHub
 plan this account cannot see, gets `repository`, with a warning that repository secrets are
 readable from any branch. `--branch` saves the deploy branch as `DEPLOY_BRANCH`.
 
-### `deployctl ci init --env E [--branch B] [--force]`
+### `deployctl ci init --env E [--branch B] [--build-branch B] [--force]`
 **Touches: local.** Writes `.github/workflows/`: `build-image.yml` (builds and pushes the
 image, and hands its tag on as the `tag` output) and `deploy.yml` (installs this version of
 deployctl, pinned, and deploys), both **managed** — regenerated from this version's
@@ -219,6 +219,12 @@ sized to the number of hosts. A managed file that differs is shown as a diff and
 replaced with `--force`. `ci.yml` is written only when there is none — it is the project's
 own (its checks go there); an existing one is left alone, and if it never calls the two
 workflows, the jobs to add are printed. `--branch` saves `DEPLOY_BRANCH` first.
+
+With a **build branch** (`BUILD_BRANCH`, saved by `--build-branch`; `''` clears it), images
+are built on that branch and deployed from `DEPLOY_BRANCH`: `build-image.yml` publishes from
+the build branch, a new `ci.yml` checks and builds there without deploying, and a third
+managed workflow, `release.yml`, runs on a push to `DEPLOY_BRANCH`, finds the build-branch
+commit it matches, waits for that commit's CI to pass, and deploys its image.
 
 > The build workflow bakes `IMAGE_REPO` in at generation time. Change `IMAGE_REPO` later and
 > the two silently disagree — `validate` checks for this.
@@ -266,8 +272,9 @@ Existing files with different contents are only replaced with `--force`.
 
 ### `deployctl ci doctor --env E [--json] [--repo-level]`
 **Touches: GitHub (read).** Checks everything continuous deployment needs — `gh`, the
-secrets' scope, the workflows (present, current for this version, `ci.yml` calling
-`deploy.yml`), `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` covering every host and the jump host,
+secrets' scope, the workflows (present, current for this version, some workflow calling
+`deploy.yml` — `ci.yml`, `release.yml`, or one of the project's — from a job that grants
+`packages: read`), `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` covering every host and the jump host,
 the config in GitHub matching this machine's, the install token while deployctl's repository
 is private, and whether `AUTO_DEPLOY` is on — and prints the command that fills each gap.
 `--json` is what the control panel reads. Exit `0` when nothing is missing, `1` otherwise.
@@ -283,12 +290,14 @@ migrates. Runs on `DEPLOY_BRANCH`.
 ### `deployctl ci runs --env E [--limit N] [--json]`
 **Touches: GitHub (read).** Recent deploys through GitHub, newest first — manual runs and the
 deploys merges triggered (skipped ones, with `AUTO_DEPLOY` off, are left out) — with action,
-tag, outcome and a link.
+tag, outcome and a link. Merges are read from whichever workflow calls `deploy.yml`, on
+`DEPLOY_BRANCH`.
 
 ### `deployctl ci auto-deploy <on|off> --env E`
 **Touches: GitHub.** Sets the repository variable `AUTO_DEPLOY`: on, every push to
 `DEPLOY_BRANCH` that passes its checks deploys itself; off, deploys are `ci deploy`. Always
-at repository level — `ci.yml` reads it before any environment is entered.
+at repository level — the workflow calling the deploy (`ci.yml`, or `release.yml`) reads it
+before any environment is entered.
 
 ---
 

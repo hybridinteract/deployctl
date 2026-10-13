@@ -3,8 +3,14 @@
 # Deploys an already-published image with deployctl — the same engine, deploy
 # lock and guards as a deploy from a laptop, run from here.
 #
+{% if RELEASES %}
+#   automatic  release.yml calls this after a push to «DEPLOY_BRANCH» — merging
+#              «BUILD_BRANCH» into it — with the image «BUILD_BRANCH»'s checks passed,
+#              when the repository variable AUTO_DEPLOY is 'true'
+{% else %}
 #   automatic  ci.yml calls this after a push to «DEPLOY_BRANCH» passed its checks
 #              and published, when the repository variable AUTO_DEPLOY is 'true'
+{% endif %}
 #   manual     Actions → deploy → Run workflow from «DEPLOY_BRANCH», or
 #              `deployctl ci deploy`: a tag, a config change, or a rollback
 #
@@ -146,6 +152,7 @@ jobs:
       - name: Deploy
         env:
           DEPLOYCTL_SSH_STRICT: "1"     # only the pinned host keys, never trust-on-first-use
+          DEPLOYCTL_SSH_MUX: "1"        # one ssh connection per host for the whole run
           DEPLOYCTL_CONFIG_STRICT: "1"  # a value the servers run with changes only on purpose
           DEPLOYCTL_NO_MINT: "1"        # a secret missing from the bundle fails, never regenerates
           # The hosts log in to the registry with this run's token: short-lived,

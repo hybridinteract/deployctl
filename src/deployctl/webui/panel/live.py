@@ -101,6 +101,8 @@ def local_facts(cfg: Config) -> dict:
         "workflows": (paths.REPO_ROOT / ".github" / "workflows" / "deploy.yml").is_file(),
         "ci_scope": bool(cfg.raw.get("CI_SCOPE")),
         "branch": cfg.raw.get("DEPLOY_BRANCH") or "main",
+        # Where images are built, when that is not the deploy branch (release.yml).
+        "build_branch": cfg.raw.get("BUILD_BRANCH") or cfg.raw.get("DEPLOY_BRANCH") or "main",
         "ssh_user": cfg.raw.get("SSH_USER") or "deploy",
     }
 
@@ -177,6 +179,9 @@ def _next(stage: dict[str, tuple[str, str]], local: dict) -> dict:
         return {"text": f"Finish CI/CD: {stage['cicd'][1]}.", "tab": "cicd"}
     if all(stage[s][0] == "done" for s in ("server", "first", "cicd")):
         # Nothing to go and do: no button, just the everyday rule.
+        build = local.get("build_branch") or local["branch"]
+        if build != local["branch"]:
+            return {"text": f"Live. Ship by merging {build} into {local['branch']}.", "tab": ""}
         return {"text": f"Live. Ship by merging to {local['branch']}.", "tab": ""}
     return {"text": "Checking the servers and GitHub…", "tab": ""}
 

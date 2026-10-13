@@ -149,3 +149,10 @@ label = "Deploy branch"
 target = "common"
 placeholder = "main"
 help = "A merge here builds the image and, with automatic deploys on, ships it. Generate workflows again after changing it."
+
+[[section.field]]
+key = "BUILD_BRANCH"
+label = "Build branch"
+target = "common"
+placeholder = "same as the deploy branch"
+help = "Only when images are built on another branch: a merge there checks and builds, and merging it into the deploy branch releases that image (release.yml). Generate workflows again after changing it."
