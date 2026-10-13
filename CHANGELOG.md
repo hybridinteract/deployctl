@@ -3,7 +3,7 @@
 Versions are git tags (`vX.Y.Z`); projects install one with
 `uv tool install git+https://github.com/hybridinteract/deployctl@vX.Y.Z`.
 
-## Unreleased
+## 0.15.0
 
 **Added**
 - **A release branch: build on one branch, deploy from another.** `BUILD_BRANCH` (`ci init
