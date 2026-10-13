@@ -117,6 +117,11 @@ class TestJourney:
         assert stages(journey) == {"server": "done", "first": "done", "cicd": "done", "live": "done"}
         assert journey["next"] == {"text": "Live. Ship by merging to prod.", "tab": ""}
 
+    def test_with_a_build_branch_shipping_is_merging_it_into_the_deploy_branch(self):
+        local = {**LOCAL, "build_branch": "main"}
+        journey = live.journey(local, fact({"tag": "8e3e648", "hosts": [host()]}), ci("ok"))
+        assert journey["next"] == {"text": "Live. Ship by merging main into prod.", "tab": ""}
+
     def test_an_unconfigured_project_starts_at_setup(self):
         journey = live.journey({**LOCAL, "configured": False}, None, None)
         assert stages(journey)["server"] == "todo"

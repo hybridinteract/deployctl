@@ -86,7 +86,7 @@ Two conditions, both checked by `ci doctor`:
 
 - **The job that calls the deploy grants `packages: read`.** A called workflow gets no more
   than its caller allows, and `ci.yml` is your file, so `ci init` never rewrites it — add
-  under its `deploy:` job:
+  under its `deploy:` job (or whichever job of yours calls `deploy.yml`):
 
   ```yaml
       permissions:
@@ -112,13 +112,49 @@ GitHub's runners connect from a large, changing set of addresses. Three ways in:
   connection goes through it (ssh `ProxyJump`); `ci setup-key` installs the CI key there too
   and `ci pin-hosts` pins its host key. The usual shape for a fleet on a private network.
 
+However it gets in, the deploy job makes **one connection per host** and runs every ssh and
+rsync of the run through it (`DEPLOYCTL_SSH_MUX=1`, ssh's `ControlMaster`). From a runner each
+new handshake costs seconds and an update makes dozens: herbally's deploy step went from
+~350s to ~170s. The sockets sit in a directory of the run's own and are closed when the
+engine exits; nothing is written to `~/.ssh/config`. A laptop can opt in the same way
+(`DEPLOYCTL_SSH_MUX=1 deployctl deploy update …`).
+
+**Checks and build run side by side.** The generated `ci.yml` builds the image while the
+checks run, so they cost no time unless they are the slower; the deploy waits for both. A
+commit that fails its checks still gets an image — never deployed on a merge, but listed by
+`deployctl image tags`, so a hand-picked `ci deploy --tag` should be one whose checks passed.
+`ci.yml` is yours: an existing one keeps its order (`needs: [checks]` on `publish` puts it back).
+
+### A release branch
+
+Some projects build on one branch and release from another: `main` collects merged work and
+builds an image per commit; merging `main` into `prod` ships. Say so with a build branch:
+
+```bash
+deployctl ci init --env production --branch prod --build-branch main
+```
+
+```
+push to main   ci.yml: your checks + build-image.yml ──► <short-sha>      (no deploy)
+push to prod   release.yml: the main commit prod's code matches
+                  └─ waits for that commit's ci.yml run to pass
+                  └─► deploy.yml with its tag (with AUTO_DEPLOY on)
+```
+
+`release.yml` is managed like the other two. A prod whose code matches no `main` commit — a
+commit made on prod, a conflict resolved in the merge — is refused rather than built: prod
+never has an image of its own, so what ships is always what the checks ran against. `ci deploy`
+dispatches from `DEPLOY_BRANCH` (prod), and `deploy.yml` still refuses runs from any other
+branch. The panel's *Configure → Build branch* is the same setting; leave it empty when one
+branch does both.
+
 ---
 
 ## Day to day
 
 | You want to | Command | Panel (Operate tab) |
 |---|---|---|
-| Ship code | Merge into the deploy branch. | — |
+| Ship code | Merge into the deploy branch (with a build branch: merge it into the deploy branch). | — |
 | Change config (a key, a worker count) | edit `config/` → `deployctl ci sync-config` → `deployctl ci deploy --allow-config-change` (redeploys the running tag with the new config) | Configure → Save → *Apply a config change*: Sync config → Deploy the change |
 | Ship code that needs a new key | The config change first (row above), then merge. | the same |
 | Deploy a specific tag | `deployctl ci deploy --tag T` | *Deploy a version* → Deploy |

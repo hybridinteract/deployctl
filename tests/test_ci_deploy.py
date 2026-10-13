@@ -341,6 +341,41 @@ class TestHostKeys:
         assert "ProxyJump" not in out
 
 
+class TestSharedConnections:
+    """DEPLOYCTL_SSH_MUX: one handshake per host per run — herbally's deploy step halved."""
+
+    def test_off_unless_asked(self):
+        rc, out = _bash('echo "$SSH_OPTS"')
+        assert rc == 0, out
+        assert "ControlMaster" not in out
+
+    def test_one_connection_per_host_in_a_directory_of_the_runs_own(self):
+        rc, out = _bash('echo "$SSH_OPTS"; echo "dir=$MUX_DIR"; ls -ld "$MUX_DIR"', DEPLOYCTL_SSH_MUX="1")
+        assert rc == 0, out
+        assert "-o ControlMaster=auto" in out and "-o ControlPersist=60" in out
+        mux_dir = next(line[4:] for line in out.splitlines() if line.startswith("dir="))
+        assert mux_dir.startswith("/tmp/dctl-mux.") and f"-o ControlPath={mux_dir}/%C" in out
+        assert out.splitlines()[-1].startswith("drwx------")  # mktemp: this user's alone
+        # A unix socket path is capped near 104 bytes; %C expands to 40 characters.
+        assert len(mux_dir) + 1 + 40 < 100
+
+    def test_ssh_itself_accepts_the_options(self):
+        """ssh -G resolves the configuration without connecting."""
+        rc, out = _bash('ssh -G $SSH_OPTS deploy@203.0.113.10', DEPLOYCTL_SSH_MUX="1")
+        assert rc == 0, out
+        assert "controlmaster auto" in out and "controlpersist 60" in out
+
+    def test_the_directory_is_gone_when_the_run_ends(self):
+        rc, out = _bash('echo "$MUX_DIR"', DEPLOYCTL_SSH_MUX="1")
+        assert rc == 0, out
+        assert not pathlib.Path(out.strip().splitlines()[-1]).exists()
+
+    def test_and_when_it_fails(self):
+        rc, out = _bash('echo "$MUX_DIR"; exit 3', DEPLOYCTL_SSH_MUX="1")
+        assert rc == 3
+        assert not pathlib.Path(out.strip().splitlines()[-1]).exists()
+
+
 @pytest.fixture
 def history(tmp_path):
     """A repository with three commits, a deploy directory inside it, and a stand-in host.

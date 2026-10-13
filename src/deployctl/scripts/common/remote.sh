@@ -40,8 +40,22 @@ _JUMP_OPT=""
 if [[ -n "${SSH_JUMP_HOST:-}" ]]; then
     _JUMP_OPT=" -o ProxyJump=${SSH_JUMP_HOST}"
 fi
+# DEPLOYCTL_SSH_MUX=1 makes one connection per host and runs every ssh and rsync
+# of the run through it (ControlMaster). CI sets it: from a GitHub runner each
+# handshake costs seconds and an update makes dozens — herbally's deploy step went
+# from ~350s to ~170s. The sockets live in a directory of this run's own, under
+# /tmp because a socket path is capped near 104 bytes (macOS's $TMPDIR alone is
+# ~50); engine_cleanup closes them, and ControlPersist ends any it never reaches.
+# Never ~/.ssh/config: that is the machine's, and on a self-hosted runner it
+# outlives the job.
+MUX_DIR=""
+_MUX_OPT=""
+if [[ "${DEPLOYCTL_SSH_MUX:-}" == "1" ]]; then
+    MUX_DIR="$(mktemp -d /tmp/dctl-mux.XXXXXX)"
+    _MUX_OPT=" -o ControlMaster=auto -o ControlPath=${MUX_DIR}/%C -o ControlPersist=60"
+fi
 # SSH_BASE_OPTS reaches the jump host itself; ProxyJump through it would loop.
-readonly SSH_BASE_OPTS="-o StrictHostKeyChecking=${_HOST_KEY_POLICY} -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+readonly SSH_BASE_OPTS="-o StrictHostKeyChecking=${_HOST_KEY_POLICY} -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4${_MUX_OPT}"
 readonly SSH_OPTS="${SSH_BASE_OPTS}${_JUMP_OPT}"
 
 # Artifacts are scoped per environment, and generated/<env>/ mirrors REMOTE_DIR
@@ -245,6 +259,18 @@ engine_cleanup() {
         registry_logout "$h"
     done
     release_deploy_lock
+    close_ssh_mux  # last: the two above still go through it
+}
+
+# The shared connections DEPLOYCTL_SSH_MUX opened, closed, and their directory gone.
+close_ssh_mux() {
+    [[ -n "$MUX_DIR" && -d "$MUX_DIR" ]] || return 0
+    local sock
+    for sock in "$MUX_DIR"/*; do
+        [[ -S "$sock" ]] || continue
+        ssh -o ControlPath="$sock" -O exit mux >/dev/null 2>&1 || true
+    done
+    rm -rf "$MUX_DIR"
 }
 
 arm_cleanup() {
@@ -254,6 +280,8 @@ arm_cleanup() {
     trap 'exit 130' INT
     trap 'exit 129' HUP
 }
+# A run that shares connections closes them however it ends, lock or not.
+[[ -z "$MUX_DIR" ]] || arm_cleanup
 
 # Log the host's docker in to the registry, when credentials are configured.
 ensure_registry_login() {

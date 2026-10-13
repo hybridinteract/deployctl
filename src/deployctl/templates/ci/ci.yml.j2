@@ -1,17 +1,24 @@
 # Written once by deployctl «VERSION» (`deployctl ci init`) — this file is YOURS:
 # ci init never overwrites it. Put your project's checks in the `checks` job.
 #
-# A push to «DEPLOY_BRANCH» runs the checks, then builds and publishes the image
-# (build-image.yml), then — with the repository variable AUTO_DEPLOY set to
-# 'true' — deploys that exact image (deploy.yml). Nothing is deployed that did
-# not pass the checks.
+{% if RELEASES %}
+# A push to «BUILD_BRANCH» runs the checks while it builds and publishes the image
+# (build-image.yml). It does not deploy: merging «BUILD_BRANCH» into «DEPLOY_BRANCH» does
+# (release.yml), and only an image whose run here passed. Pull requests run the
+# checks only.
+{% else %}
+# A push to «DEPLOY_BRANCH» runs the checks while it builds and publishes the image
+# (build-image.yml), then — once both pass, and with the repository variable
+# AUTO_DEPLOY set to 'true' — deploys that exact image (deploy.yml). Nothing is
+# deployed that did not pass the checks.
+{% endif %}
 
 name: CI
 
 on:
   pull_request:
   push:
-    branches: ["«DEPLOY_BRANCH»"]
+    branches: ["«BUILD_BRANCH»"]
 
 permissions:
   contents: read
@@ -34,16 +41,20 @@ jobs:
 
   publish:
     name: Build & push image
-    needs: [checks]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/«DEPLOY_BRANCH»'
+    # Not `needs: checks`: the image builds while the checks run, so the checks
+    # cost no time unless they are the slower. A commit that fails its checks
+    # still gets an image, which is never deployed on its own: the deploy waits
+    # for both{% if RELEASES %} (release.yml, for this whole run){% endif %}.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/«BUILD_BRANCH»'
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/build-image.yml
+{% if not RELEASES %}
 
   deploy:
     name: Deploy to «ENV»
-    needs: publish
+    needs: [checks, publish]
     if: github.event_name == 'push' && github.ref == 'refs/heads/«DEPLOY_BRANCH»' && vars.AUTO_DEPLOY == 'true'
     # A called workflow gets no more than this job grants: packages: read lets the
     # deploy pull the image with the run's own token.
@@ -55,3 +66,4 @@ jobs:
       environment: «ENV»
       tag: ${{ needs.publish.outputs.tag }}
     secrets: inherit
+{% endif %}

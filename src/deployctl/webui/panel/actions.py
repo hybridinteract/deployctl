@@ -137,11 +137,12 @@ ACTIONS: dict[str, Action] = {
                "Print every ssh, rsync and compose command an update to this tag would run.",
                "Touches nothing — not even ssh.", params=(TAG,)),
         Action("ci-init", "Generate workflows", ("ci", "init", "--env", "{env}"),
-               "Write build-image.yml and deploy.yml into .github/workflows, and ci.yml if there is none.",
+               "Write build-image.yml and deploy.yml (and release.yml, with a build branch) into "
+               ".github/workflows, and ci.yml if there is none.",
                "Writes files in this repository. Commit and push them — GitHub runs what is on the branch."),
         Action("ci-init-force", "Regenerate workflows", ("ci", "init", "--env", "{env}", "--force"),
-               "Replace the two managed workflows with this version's. ci.yml is yours and never touched.",
-               "Overwrites build-image.yml and deploy.yml. Review with git diff, then commit and push."),
+               "Replace the managed workflows with this version's. ci.yml is yours and never touched.",
+               "Overwrites build-image.yml and deploy.yml (and release.yml). Review with git diff, then commit and push."),
         # -- every host, reading --------------------------------------------------
         Action("doctor", "Doctor", ("deploy", "doctor", "--env", "{env}"),
                "Per host: ssh, docker without sudo, writable directory, the running image pullable.",
@@ -334,7 +335,7 @@ def ci_fix(item: Mapping) -> str | None:
         return "ci-rotate-key" if status == "ok" else "ci-setup-key"
     if status == "ok" or item.get("value") == "hand-written":
         return None  # nothing to press: a workflow deployctl did not write is moved aside by a person
-    if key in ("workflow:build-image.yml", "workflow:deploy.yml"):
+    if key in ("workflow:build-image.yml", "workflow:deploy.yml", "workflow:release.yml"):
         return "ci-init-force" if status == "warn" else "ci-init"
     return _CI_FIXES.get(key)
 

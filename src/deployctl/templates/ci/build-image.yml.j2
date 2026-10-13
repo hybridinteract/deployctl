@@ -1,7 +1,7 @@
 # Managed by deployctl «VERSION» — regenerate with: deployctl ci init --force
 #
 # Build and publish the application image. ci.yml calls this after its checks
-# pass on a push to «DEPLOY_BRANCH»; a manual run or a v* tag builds without them.
+# pass on a push to «BUILD_BRANCH»; a manual run or a v* tag builds without them.
 #
 #   «IMAGE_REPO»:<short-sha>          the api image
 {% if WORKER_BUILD_TARGET %}
@@ -49,7 +49,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Pushes to «DEPLOY_BRANCH» and v* tags publish the plain short SHA — the form
+      # Pushes to «BUILD_BRANCH» and v* tags publish the plain short SHA — the form
       # `deployctl image tags` lists. Any other branch gets -dev appended: pullable
       # by name, never offered as a release.
       - name: Compute the image tag
@@ -57,7 +57,7 @@ jobs:
         run: |
           short="$(git rev-parse --short=7 HEAD)"
           case "$GITHUB_REF" in
-            refs/heads/«DEPLOY_BRANCH»|refs/tags/*) echo "short=$short" >> "$GITHUB_OUTPUT" ;;
+            refs/heads/«BUILD_BRANCH»|refs/tags/*) echo "short=$short" >> "$GITHUB_OUTPUT" ;;
             *) echo "short=$short-dev" >> "$GITHUB_OUTPUT" ;;
           esac
 
@@ -81,7 +81,7 @@ jobs:
           push: true
           tags: |
             «IMAGE_REPO»:${{ steps.sha.outputs.short }}
-            ${{ github.ref == 'refs/heads/«DEPLOY_BRANCH»' && '«IMAGE_REPO»:latest' || '' }}
+            ${{ github.ref == 'refs/heads/«BUILD_BRANCH»' && '«IMAGE_REPO»:latest' || '' }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
           # A provenance attestation turns the tag into a manifest index with an
@@ -102,7 +102,7 @@ jobs:
           push: true
           tags: |
             «IMAGE_REPO»:${{ steps.sha.outputs.short }}-worker
-            ${{ github.ref == 'refs/heads/«DEPLOY_BRANCH»' && '«IMAGE_REPO»:latest-worker' || '' }}
+            ${{ github.ref == 'refs/heads/«BUILD_BRANCH»' && '«IMAGE_REPO»:latest-worker' || '' }}
           cache-from: |
             type=gha,scope=worker
             type=gha,scope=api

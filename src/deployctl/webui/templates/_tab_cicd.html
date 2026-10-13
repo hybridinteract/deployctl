@@ -9,9 +9,16 @@
   <section class="group">
     <header class="group-head">
       <h2>Continuous deployment</h2>
+      {% if local.build_branch and local.build_branch != local.branch %}
+      <p>A merge to <code>{{ local.build_branch }}</code> checks and builds the image; merging
+        <code>{{ local.build_branch }}</code> into <code>{{ local.branch }}</code> — once automatic deploys are on —
+        deploys that image: deployctl itself, run in GitHub Actions with a CI-only key, pinned host keys and a copy
+        of this machine's config. Work down the list; each row re-checks after its button runs.</p>
+      {% else %}
       <p>A merge to <code>{{ local.branch }}</code> builds the image and — once automatic deploys are on —
         deploys it: deployctl itself, run in GitHub Actions with a CI-only key, pinned host keys and a copy
         of this machine's config. Work down the list; each row re-checks after its button runs.</p>
+      {% endif %}
     </header>
     <div data-live="checklist"><span class="hint">asking GitHub…</span></div>
   </section>
