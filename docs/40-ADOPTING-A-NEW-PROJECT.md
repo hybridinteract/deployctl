@@ -10,7 +10,7 @@ say so rather than forking the tool.
 ## 1. Install, then initialise the repository
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.14.1      # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.15.0      # once per machine
 cd /path/to/new-project
 deployctl init --mode single --env production
 ```
