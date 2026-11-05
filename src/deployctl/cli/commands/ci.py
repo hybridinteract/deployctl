@@ -32,7 +32,7 @@ import jinja2
 import typer
 
 from ... import __version__
-from .. import bundle, github, paths, secrets, tags, ui
+from .. import bundle, deployment, github, paths, secrets, tags, ui
 from ..config import PERSONAL_KEYS, Config
 from ..context import env_option, load_config, resolve_env
 from ..envfile import parse_env_text, patch_env_file, read_env_file
@@ -91,7 +91,30 @@ def scope_env(cfg: Config, repo_level: bool = False) -> str | None:
     """The GitHub environment the secrets live on, or None for the repository."""
     if repo_level or cfg.raw["CI_SCOPE"] == "repository":
         return None
-    return cfg.env
+    return deployment.of(cfg).github_environment(cfg.env)
+
+
+def _refuse_unnamed_second(cfg: Config) -> None:
+    """Stop a `ci` command that would act on another deploy folder's GitHub names.
+
+    A second folder without DEPLOYMENT resolves to the plain names — deploy.yml,
+    DEPLOYCTL_CONFIG, DEPLOY_SSH_KEY — which are the repository's deploy/'s: its
+    sync-config would replace that deployment's config, its setup-key that
+    deployment's key, its deploy start that deployment's workflow.
+    """
+    owner = deployment.unnamed_conflict(cfg)
+    if owner is None:
+        return
+    ui.error(f"{deployment.folder()}/ has no DEPLOYMENT, and {deployment._rel(owner.path)} already uses the "
+             "plain CI names — this would act on that deployment's workflows and GitHub secrets")
+    ui.hint("give this folder its own: DEPLOYMENT=<name> in config/common.env (e.g. DEPLOYMENT=sentinel)")
+    raise typer.Exit(2)
+
+
+def _announce(cfg: Config) -> None:
+    """Which deployment a command that changes GitHub or the hosts acts on — said first."""
+    names = deployment.of(cfg)
+    ui.kv("deployment", f"{names.deployment or '(unnamed)'}  ·  {deployment.folder()}/  ·  env {cfg.env}")
 
 
 def _where(cfg: Config, scope: str | None) -> str:
@@ -113,8 +136,22 @@ def releases(cfg: Config) -> bool:
 
 
 def managed(cfg: Config) -> tuple[str, ...]:
-    """The workflows `ci init` regenerates for this configuration."""
+    """The workflows `ci init` regenerates for this configuration.
+
+    A named deployment writes only its own two: the image, and so build-image.yml
+    and ci.yml, belong to the repository's deploy/ (cli/deployment.py).
+    """
+    names = deployment.of(cfg)
+    if names.named:
+        return (names.deploy_workflow, names.release_workflow)
     return MANAGED + ((RELEASE,) if releases(cfg) else ())
+
+
+def _template(name: str, cfg: Config) -> str:
+    """The template a workflow file is rendered from: a deployment's own files are
+    deploy.yml's and release.yml's under another name."""
+    names = deployment.of(cfg)
+    return {names.deploy_workflow: "deploy.yml", names.release_workflow: "release.yml"}.get(name, name)
 
 
 @dataclass(frozen=True)
@@ -130,7 +167,11 @@ class DeployCaller:
 #: A top-level key and its block: every line after it that is indented deeper, or blank.
 #: Under `jobs:` that is one job each; other top-level blocks never call deploy.yml.
 _JOB = re.compile(r"^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\n((?:(?:    .*|[ \t]*)\n)*)", re.M)
-_CALLS_DEPLOY = re.compile(r"^    uses:\s*['\"]?\./\.github/workflows/deploy\.yml\b", re.M)
+
+
+def _calls(workflow: str) -> re.Pattern:
+    """A job's `uses:` line calling this workflow file — deploy.yml, or a deployment's own."""
+    return re.compile(rf"^    uses:\s*['\"]?\./\.github/workflows/{re.escape(workflow)}(?![\w.-])", re.M)
 
 
 def _permissions(text: str, indent: str) -> str | None:
@@ -157,23 +198,25 @@ def _grants_packages(job: str, workflow: str) -> bool:
     return re.search(r"\b(read-all|write-all|packages:\s*(read|write))\b", perms) is not None
 
 
-def deploy_callers(wf: pathlib.Path) -> list[DeployCaller]:
-    """Every job in .github/workflows that calls deploy.yml — a text scan, no YAML parser.
+def deploy_callers(wf: pathlib.Path, workflow: str = "deploy.yml") -> list[DeployCaller]:
+    """Every job in .github/workflows that calls the deploy workflow — a text scan, no YAML parser.
 
     ci.yml's `deploy:` job when one branch builds and deploys; release.yml's when a
     build branch is merged into the deploy branch. Every workflow is read, so a
-    project that wires the deploy its own way is seen as it is.
+    project that wires the deploy its own way is seen as it is. ``workflow`` is a
+    named deployment's own (deploy-sentinel.yml), whose callers are its own.
     """
     found: list[DeployCaller] = []
     if not wf.is_dir():
         return found
+    calls = _calls(workflow)
     for path in sorted([*wf.glob("*.yml"), *wf.glob("*.yaml")]):
-        if path.name == "deploy.yml":
+        if path.name == workflow:
             continue
         text = path.read_text() + "\n"
         for match in _JOB.finditer(text):
             job, body = match.group(1), match.group(2)
-            if not _CALLS_DEPLOY.search(body):
+            if not calls.search(body):
                 continue
             name = re.search(r"^    name:[ \t]*(.+?)[ \t]*$", body, re.M)
             found.append(DeployCaller(path.name, job, name.group(1).strip("'\"") if name else job,
@@ -207,7 +250,33 @@ def _render(name: str, ctx: dict) -> str:
 
 
 def _context(cfg: Config) -> dict:
+    names = deployment.of(cfg)
+    here = deployment.folder()
+    cli = f"deployctl --project-dir {here}" if names.named else "deployctl"
+    gh_env = ("${{ inputs.environment }}" if not names.named else
+              f"${{{{ inputs.environment == 'production' && '{names.deployment}' || "
+              f"format('{names.deployment}-{{0}}', inputs.environment) }}}}")
     return {
+        # ---- which deployment (cli/deployment.py). Unnamed, every one of these is the
+        # literal earlier versions wrote, so deploy/'s workflows render unchanged.
+        "DEPLOYMENT": names.deployment,
+        "PROJECT_DIR": here,
+        "CONFIG_HINT_DIR": here if names.named else "deploy",
+        "WORKFLOW_NAME": names.deploy_workflow.removesuffix(".yml"),
+        "RELEASE_NAME": names.release_workflow.removesuffix(".yml"),
+        "DEPLOY_WORKFLOW": names.deploy_workflow,
+        "RELEASE_WORKFLOW": names.release_workflow,
+        "CONFIG_SECRET": names.config_secret,
+        "CONFIG_DIGEST": names.config_digest,
+        "SSH_KEY_SECRET": names.ssh_key_secret,
+        "KNOWN_HOSTS_VAR": names.known_hosts,
+        "AUTO_DEPLOY_VAR": names.auto_deploy,
+        "APP_URL_VAR": names.app_url,
+        "GH_ENV": gh_env,
+        "CLI": cli,
+        "UNPACK_ARGS": f" --deployment {names.deployment}" if names.named else "",
+        "CLEANUP": (f"{here}/config {here}/generated" if names.named
+                    else "deploy/config deploy/generated deployctl/config deployctl/generated"),
         "VERSION": __version__,
         "TOOL_REPO": TOOL_REPO,
         "TOOL_REF": f"v{__version__}",
@@ -310,6 +379,7 @@ def init(
     build branch (BUILD_BRANCH), release.yml is managed too.
     """
     cfg = load_config(env, require_valid=False)
+    _refuse_unnamed_second(cfg)
     if not cfg.raw["IMAGE_REPO"] or "your-org" in cfg.raw["IMAGE_REPO"]:
         ui.error("IMAGE_REPO is not set — fill it in config/common.env first")
         raise typer.Exit(1)
@@ -319,6 +389,14 @@ def init(
     if build is not None:
         patch_env_file(paths.COMMON_CONFIG, {"BUILD_BRANCH": build})
         cfg.raw["BUILD_BRANCH"] = build
+    names = deployment.of(cfg)
+    if names.named and not releases(cfg):
+        # Nothing would ever call its deploy workflow: ci.yml's deploy job is deploy/'s.
+        ui.error(f"DEPLOYMENT={names.deployment} needs a build branch: it releases the image the repository's "
+                 "CI builds — set BUILD_BRANCH (e.g. main) and DEPLOY_BRANCH (e.g. prod-" + names.deployment + ")")
+        raise typer.Exit(1)
+    if names.named:
+        _announce(cfg)
 
     ctx = _context(cfg)
     target = workflows_dir()
@@ -327,7 +405,7 @@ def init(
     for name in managed(cfg):
         path = target / name
         rel = path.relative_to(paths.REPO_ROOT)
-        content = _render(name, ctx)
+        content = _render(_template(name, cfg), ctx)
         if path.is_file():
             current = path.read_text()
             if current == content:
@@ -357,7 +435,14 @@ def init(
 
     owned = target / OWNED
     rel_owned = owned.relative_to(paths.REPO_ROOT)
-    if not owned.is_file():
+    if names.named:
+        # The image this deployment releases is built by the repository's own CI.
+        # ci.yml and build-image.yml are deploy/'s; this never writes either.
+        if not owned.is_file() or "build-image.yml" not in owned.read_text():
+            ui.warn(f"{rel_owned} does not build the image (build-image.yml) — {names.release_workflow} waits for "
+                    f"its run on {build_branch(cfg)} and would find none")
+            ui.hint("the repository's own deploy/ writes them: deployctl ci init, run from there")
+    elif not owned.is_file():
         owned.write_text(_render(OWNED, ctx))
         ui.ok(f"wrote {rel_owned} — yours from now on: put your checks in its `checks` job")
     else:
@@ -379,6 +464,13 @@ def init(
     if foreign or blocked:
         raise typer.Exit(1)
     print()
+    if names.named:
+        cli = ctx["CLI"]
+        ui.info(f"Next: commit {names.deploy_workflow} and {names.release_workflow}; merge them to the default branch "
+                "too, which manual runs (ci deploy) need")
+        ui.info(f"then: {cli} ci setup-key --env {cfg.env} && {cli} ci pin-hosts --env {cfg.env} "
+                f"&& {cli} ci sync-config --env {cfg.env}")
+        return
     ui.info("Next, once: Settings → Actions → General → Workflow permissions → \"Read and write\" (image push)")
     ui.info(f"then: deployctl ci setup-key --env {cfg.env} && deployctl ci pin-hosts --env {cfg.env} "
             f"&& deployctl ci sync-config --env {cfg.env}")
@@ -418,10 +510,15 @@ def setup_key(
     """
     env_name = resolve_env(env)
     cfg = load_config(env_name)
+    _refuse_unnamed_second(cfg)
     _github()
     info = github.repo()
     scope = scope_env(cfg, repo_level)
-    comment = f"deployctl-ci@{info['name']}/{env_name}"
+    names = deployment.of(cfg)
+    _announce(cfg)
+    # What --rotate finds the key by on the hosts: per deployment, so two of them
+    # sharing a host could never replace each other's key.
+    comment = f"deployctl-ci@{info['name']}/{names.github_environment(env_name)}"
 
     ui.header(f"CI deploy key — {env_name}")
     with tempfile.TemporaryDirectory(prefix="deployctl-ci-key-") as tmp:
@@ -459,12 +556,12 @@ def setup_key(
 
         try:
             with open(key) as handle:
-                github.set_secret("DEPLOY_SSH_KEY", handle.read(), scope)
+                github.set_secret(names.ssh_key_secret, handle.read(), scope)
         except github.GitHubError as exc:
             ui.error(str(exc))
             raise typer.Exit(1) from None
 
-    ui.ok(f"DEPLOY_SSH_KEY → {_where(cfg, scope)}; the local copy is deleted")
+    ui.ok(f"{names.ssh_key_secret} → {_where(cfg, scope)}; the local copy is deleted")
     ui.kv("fingerprint", fingerprint)
     ui.kv("comment", f"{comment}   (what --rotate finds on the hosts)")
 
@@ -490,8 +587,11 @@ def pin_hosts(env: str = env_option(), repo_level: bool = _repo_level_option) ->
     """
     env_name = resolve_env(env)
     cfg = load_config(env_name)
+    _refuse_unnamed_second(cfg)
     _github()
     scope = scope_env(cfg, repo_level)
+    names = deployment.of(cfg)
+    _announce(cfg)
     targets = [(host, "") for host in cfg.hosts]
     if cfg.raw["SSH_JUMP_HOST"]:
         targets.append(_jump_target(cfg.raw["SSH_JUMP_HOST"]))
@@ -509,11 +609,11 @@ def pin_hosts(env: str = env_option(), repo_level: bool = _repo_level_option) ->
                 f"ssh {cfg.raw['SSH_USER']}@{missing[0]} true")
         raise typer.Exit(1)
     try:
-        github.set_variable("DEPLOY_KNOWN_HOSTS", "\n".join(lines), scope)
+        github.set_variable(names.known_hosts, "\n".join(lines), scope)
     except github.GitHubError as exc:
         ui.error(str(exc))
         raise typer.Exit(1) from None
-    ui.ok(f"DEPLOY_KNOWN_HOSTS → {_where(cfg, scope)}: {len(lines)} key(s) for {len(targets)} host(s)")
+    ui.ok(f"{names.known_hosts} → {_where(cfg, scope)}: {len(lines)} key(s) for {len(targets)} host(s)")
 
 
 # ---- ci sync-config / status / unpack: this machine's config/ → GitHub → the runner ----
@@ -527,10 +627,10 @@ def _collect(env: str) -> dict[str, str]:
         raise typer.Exit(1) from None
 
 
-def _remote_digest(scope: str | None) -> tuple[str | None, str]:
+def _remote_digest(scope: str | None, digest_name: str = bundle.DIGEST_NAME) -> tuple[str | None, str]:
     """``(digest, "")`` from GitHub, or ``(None, why not)``."""
     try:
-        value = github.variables(scope).get(bundle.DIGEST_NAME)
+        value = github.variables(scope).get(digest_name)
     except github.GitHubError as exc:
         if "404" in str(exc) or "not found" in str(exc).lower():
             return None, "nothing uploaded yet" + (f" (or no GitHub environment named '{scope}')" if scope else "")
@@ -556,7 +656,10 @@ def sync_config(
     # Upload only what would deploy: an invalid config would fail in CI later, and
     # a missing generated secret would fail there too (CI never mints one).
     cfg = load_config(env_name)
+    _refuse_unnamed_second(cfg)
     scope = scope_env(cfg, repo_level)
+    names = deployment.of(cfg)
+    _announce(cfg)
     unminted = _unminted(cfg)
     if unminted:
         ui.error(f"config/secrets.{env_name}.env has no {', '.join(unminted)}")
@@ -572,8 +675,8 @@ def sync_config(
         raise typer.Exit(1)
 
     files = _collect(env_name)
-    local = bundle.digest(files)
-    remote, _ = _remote_digest(scope)
+    local = bundle.digest(files, names.deployment)
+    remote, _ = _remote_digest(scope, names.config_digest)
     if remote == local and not force:
         ui.ok(f"GitHub's copy of '{env_name}' is already current ({local[:19]}…)")
         return
@@ -581,20 +684,20 @@ def sync_config(
     # Secret first, digest second: if the second call fails, CI holds a bundle it
     # cannot verify and refuses it — failing closed rather than deploying either copy.
     try:
-        github.set_secret(bundle.SECRET_NAME, bundle.encode(files), scope)
+        github.set_secret(names.config_secret, bundle.encode(files, names.deployment), scope)
     except github.GitHubError as exc:
         ui.error(str(exc))
         if scope:
-            ui.hint(f"no GitHub environment '{env_name}'? Create it, or on GitHub Free: deployctl ci connect")
+            ui.hint(f"no GitHub environment '{scope}'? Create it, or on GitHub Free: deployctl ci connect")
         raise typer.Exit(1) from None
     try:
-        github.set_variable(bundle.DIGEST_NAME, local, scope)
+        github.set_variable(names.config_digest, local, scope)
     except github.GitHubError as exc:
         ui.error(f"uploaded the bundle but not its digest: {exc}")
         ui.hint("CI refuses the bundle until they match — re-run this command")
         raise typer.Exit(1) from None
 
-    ui.ok(f"uploaded config for '{env_name}' → {_where(cfg, scope)} ({local[:19]}…)")
+    ui.ok(f"uploaded config for '{env_name}' → {names.config_secret} on {_where(cfg, scope)} ({local[:19]}…)")
     for name in sorted(files):
         print(f"    {name:<28} {len(parse_env_text(files[name]))} keys")
 
@@ -610,8 +713,9 @@ def status(env: str = env_option(), repo_level: bool = _repo_level_option) -> No
     _github()
     cfg = load_config(env_name, require_valid=False)
     scope = scope_env(cfg, repo_level)
-    local = bundle.digest(_collect(env_name))
-    remote, why = _remote_digest(scope)
+    names = deployment.of(cfg)
+    local = bundle.digest(_collect(env_name), names.deployment)
+    remote, why = _remote_digest(scope, names.config_digest)
     if remote is None:
         ui.warn(f"GitHub has no config for '{env_name}': {why}")
         ui.hint(f"deployctl ci sync-config --env {env_name}")
@@ -630,13 +734,19 @@ def unpack(
     force: bool = typer.Option(
         False, "--force", "-f", help="Replace config files that already exist with different contents."
     ),
+    deployment_name: str = typer.Option(
+        "", "--deployment", help="The deployment the bundle must have been made for (DEPLOYMENT). "
+        "Given by a named deployment's own workflow: config/ is empty until this fills it."
+    ),
 ) -> None:
     """In CI: write config/ from the DEPLOYCTL_CONFIG secret, after checking its digest.
 
     Reads DEPLOYCTL_CONFIG and DEPLOYCTL_CONFIG_DIGEST from the environment, never
     from arguments, which would show in process listings. Under GitHub Actions it
     first registers every credential inside the bundle with ::add-mask:: — GitHub
-    masks the secret's own value, not what is decoded from it.
+    masks the secret's own value, not what is decoded from it. A named
+    deployment's workflow maps its own secret (DEPLOYCTL_CONFIG_SENTINEL) onto
+    these same two variables.
     """
     if not env:
         # resolve_env would look in config/, which is exactly what is empty here.
@@ -650,7 +760,7 @@ def unpack(
                  f"repository, or the job does not pass it: deployctl ci sync-config --env {env}")
         raise typer.Exit(1)
     try:
-        files = bundle.decode(blob, env)
+        files = bundle.decode(blob, env, deployment_name)
     except bundle.BundleError as exc:
         ui.error(str(exc))
         raise typer.Exit(1) from None
@@ -665,7 +775,7 @@ def unpack(
     if not expected:
         ui.error(f"{bundle.DIGEST_NAME} is empty — set by `deployctl ci sync-config` beside the secret")
         raise typer.Exit(1)
-    actual = bundle.digest(files)
+    actual = bundle.digest(files, deployment_name)
     if actual != expected:
         ui.error(f"the config bundle does not match {bundle.DIGEST_NAME} ({actual[:19]}… ≠ {expected[:19]}…)")
         ui.hint(f"the two were set separately; re-run from the machine with the config: "
@@ -725,6 +835,17 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
                f"deployctl setup --env {env}")
         return items
 
+    names = deployment.of(cfg)
+    owner = deployment.unnamed_conflict(cfg)
+    if owner is not None:
+        _check(items, "deployment", "fail", "This deployment's name",
+               f"no DEPLOYMENT, and {deployment._rel(owner.path)} already uses the plain CI names",
+               "set DEPLOYMENT=<name> in config/common.env (e.g. DEPLOYMENT=sentinel)")
+        return items
+    if names.named:
+        _check(items, "deployment", "ok", "This deployment's name",
+               f"{names.deployment} — {names.deploy_workflow}, {names.config_secret} …", value=names.deployment)
+
     if cfg.raw["CI_SCOPE"]:
         _check(items, "scope", "ok", "Where secrets live", cfg.raw["CI_SCOPE"])
     else:
@@ -750,15 +871,16 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
             _check(items, f"workflow:{name}", "ok", f".github/workflows/{name}", "current")
     # Whichever workflow calls the deploy — ci.yml's `deploy:` job, or release.yml
     # with a build branch — not the file the template would have put it in.
-    callers = deploy_callers(wf)
-    expected = RELEASE if releases(cfg) else OWNED
+    callers = deploy_callers(wf, names.deploy_workflow)
+    release = names.release_workflow
+    expected = release if releases(cfg) else OWNED
     if callers:
         _check(items, "workflow:ci", "ok", f".github/workflows/{', '.join(sorted({c.workflow for c in callers}))}",
                "calls the deploy workflow")
-    elif expected == OWNED or (wf / RELEASE).is_file():
-        # (A missing release.yml has its own row above.)
+    elif expected == OWNED or (wf / release).is_file():
+        # (A missing release workflow has its own row above.)
         _check(items, "workflow:ci", "todo", f".github/workflows/{expected}",
-               "never calls deploy.yml" if (wf / expected).is_file() else "missing",
+               f"never calls {names.deploy_workflow}" if (wf / expected).is_file() else "missing",
                f"deployctl ci init --env {env}")
     blocked = next((c for c in callers if not c.can_pull), None)
     if blocked:
@@ -777,7 +899,7 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
                "deployctl migrate-config --apply   (moves it to config/local.env)")
 
     try:
-        names = github.secret_names(scope)
+        held = github.secret_names(scope)  # the secrets GitHub holds; `names` are the ones this deployment uses
         values = github.variables(scope)
     except github.GitHubError as exc:
         if info["permission"] not in github.CAN_MANAGE:
@@ -792,12 +914,13 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
         return items
     repo_values = values if scope is None else _safe_variables(None)
 
-    if "DEPLOY_SSH_KEY" in names:
-        _check(items, "ssh-key", "ok", "CI ssh key (DEPLOY_SSH_KEY)", "set")
+    if names.ssh_key_secret in held:
+        _check(items, "ssh-key", "ok", f"CI ssh key ({names.ssh_key_secret})", "set")
     else:
-        _check(items, "ssh-key", "todo", "CI ssh key (DEPLOY_SSH_KEY)", "not set", f"deployctl ci setup-key --env {env}")
+        _check(items, "ssh-key", "todo", f"CI ssh key ({names.ssh_key_secret})", "not set",
+               f"deployctl ci setup-key --env {env}")
 
-    pinned = values.get("DEPLOY_KNOWN_HOSTS", "")
+    pinned = values.get(names.known_hosts, "")
     wanted = list(cfg.hosts) + ([_jump_target(cfg.raw["SSH_JUMP_HOST"])[0]] if cfg.raw["SSH_JUMP_HOST"] else [])
     uncovered = [host for host in wanted if not _covers(pinned, host)]
     if not pinned:
@@ -808,12 +931,12 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
     else:
         _check(items, "host-keys", "ok", "Pinned host keys", f"every host ({len(wanted)})")
 
-    digest = values.get(bundle.DIGEST_NAME)
-    if bundle.SECRET_NAME not in names or not digest:
+    digest = values.get(names.config_digest)
+    if names.config_secret not in held or not digest:
         _check(items, "config", "todo", "Deploy config in GitHub", "not uploaded", f"deployctl ci sync-config --env {env}")
     else:
         try:
-            local = bundle.digest(bundle.collect(env))
+            local = bundle.digest(bundle.collect(env), names.deployment)
         except bundle.BundleError as exc:
             _check(items, "config", "warn", "Deploy config in GitHub", str(exc))
         else:
@@ -824,15 +947,15 @@ def doctor_items(cfg: Config, repo_level: bool = False) -> list[dict]:
                        f"deployctl ci sync-config --env {env}")
 
     tool_private = github.gh(["repo", "view", TOOL_REPO, "--json", "visibility", "--jq", ".visibility"]).stdout.strip()
-    if tool_private and tool_private != "PUBLIC" and "DEPLOYCTL_INSTALL_TOKEN" not in names:
+    if tool_private and tool_private != "PUBLIC" and "DEPLOYCTL_INSTALL_TOKEN" not in held:
         _check(items, "install-token", "todo", "Installing deployctl in CI",
                f"{TOOL_REPO} is private and DEPLOYCTL_INSTALL_TOKEN is not set",
                "a fine-grained token, Contents: read on that repository → gh secret set DEPLOYCTL_INSTALL_TOKEN")
     else:
         _check(items, "install-token", "ok", "Installing deployctl in CI",
-               "token set" if "DEPLOYCTL_INSTALL_TOKEN" in names else f"{TOOL_REPO} is public")
+               "token set" if "DEPLOYCTL_INSTALL_TOKEN" in held else f"{TOOL_REPO} is public")
 
-    auto = repo_values.get("AUTO_DEPLOY", "")
+    auto = repo_values.get(names.auto_deploy, "")
     on = (f"on — merging {build_branch(cfg)} into {cfg.raw['DEPLOY_BRANCH']} deploys" if releases(cfg)
           else f"on — every push to {cfg.raw['DEPLOY_BRANCH']} deploys")
     _check(items, "auto-deploy", "ok", "Automatic deploys", on if auto == "true" else "off — deploy with `ci deploy`",
@@ -908,7 +1031,10 @@ def deploy(
     """
     env_name = resolve_env(env)
     cfg = load_config(env_name)
+    _refuse_unnamed_second(cfg)
     _github()
+    workflow = deployment.of(cfg).deploy_workflow
+    _announce(cfg)
     if not tag:
         running = tags.running(cfg)
         if rollback:
@@ -928,13 +1054,13 @@ def deploy(
     action = "rollback" if rollback else "update"
     started = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=5)
     try:
-        github.dispatch("deploy.yml", cfg.raw["DEPLOY_BRANCH"], {
+        github.dispatch(workflow, cfg.raw["DEPLOY_BRANCH"], {
             "environment": env_name, "tag": tag, "action": action,
             "allow_config_change": "true" if allow_config_change else "false",
         })
     except github.GitHubError as exc:
         ui.error(str(exc))
-        ui.hint(f"is deploy.yml on {cfg.raw['DEPLOY_BRANCH']} and the default branch? deployctl ci doctor")
+        ui.hint(f"is {workflow} on {cfg.raw['DEPLOY_BRANCH']} and the default branch? deployctl ci doctor")
         raise typer.Exit(1) from None
     ui.ok(f"started: {action} {tag} → {env_name} (from {cfg.raw['DEPLOY_BRANCH']})")
     if not watch:
@@ -942,7 +1068,7 @@ def deploy(
 
     run_id = None
     for _ in range(20):  # the run appears a few seconds after the dispatch
-        for item in github.runs("deploy.yml", limit=5, event="workflow_dispatch"):
+        for item in github.runs(workflow, limit=5, event="workflow_dispatch"):
             created = datetime.datetime.fromisoformat(item["createdAt"].replace("Z", "+00:00"))
             if created >= started:
                 run_id = item["databaseId"]
@@ -976,7 +1102,8 @@ def _deploy_job(jobs: list[dict], callers: list[DeployCaller]) -> dict | None:
 def deploy_runs(cfg: Config, limit: int = 10) -> list[dict]:
     """Deploys through GitHub, newest first: manual ones, and those a push to the deploy branch ran."""
     out = []
-    for item in github.runs("deploy.yml", limit=limit, event="workflow_dispatch"):
+    workflow_file = deployment.of(cfg).deploy_workflow
+    for item in github.runs(workflow_file, limit=limit, event="workflow_dispatch"):
         title = item.get("displayTitle", "")
         parts = title.split()
         out.append({
@@ -985,7 +1112,7 @@ def deploy_runs(cfg: Config, limit: int = 10) -> list[dict]:
             "status": item.get("conclusion") or item.get("status", ""), "url": item["url"],
         })
     by_workflow: dict[str, list[DeployCaller]] = {}
-    for caller in deploy_callers(workflows_dir()):
+    for caller in deploy_callers(workflows_dir(), workflow_file):
         by_workflow.setdefault(caller.workflow, []).append(caller)
     for workflow, callers in by_workflow.items():
         for item in github.runs(workflow, limit=limit, branch=cfg.raw["DEPLOY_BRANCH"], event="push"):
@@ -1030,17 +1157,20 @@ def auto_deploy(
     state: str = typer.Argument(..., help="on or off"),
     env: str = env_option(),
 ) -> None:
-    """Turn deploy-on-merge on or off (the repository variable AUTO_DEPLOY)."""
+    """Turn deploy-on-merge on or off (the repository variable AUTO_DEPLOY — or a
+    named deployment's own, AUTO_DEPLOY_<NAME>, so one never switches the other)."""
     if state not in ("on", "off"):
         ui.error("say on or off")
         raise typer.Exit(2)
     cfg = load_config(env, require_valid=False)
+    _refuse_unnamed_second(cfg)
     _github()
+    _announce(cfg)
     try:
         # Repository level whatever CI_SCOPE says: the workflow calling the deploy
         # (ci.yml, or release.yml) reads it in a job's `if`, before any environment
         # is entered.
-        github.set_variable("AUTO_DEPLOY", "true" if state == "on" else "false", None)
+        github.set_variable(deployment.of(cfg).auto_deploy, "true" if state == "on" else "false", None)
     except github.GitHubError as exc:
         ui.error(str(exc))
         raise typer.Exit(1) from None

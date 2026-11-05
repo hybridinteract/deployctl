@@ -14,7 +14,7 @@ import dataclasses
 
 from deployctl.cli import config as cli_config
 from deployctl.cli import fields as cli_fields
-from deployctl.cli import checks, paths, snapshots
+from deployctl.cli import checks, deployment, paths, snapshots
 from deployctl.cli.envfile import patch_env_file, read_env_file
 
 
@@ -199,10 +199,15 @@ def summary(env: str) -> dict:
         "mode": cfg.mode,
         "tls": cfg.tls_mode,
         "project": cfg.raw.get("PROJECT_NAME") or "—",
+        # Which of the repository's deploy folders this panel is for (cli/deployment.py).
+        "deployment": cfg.raw.get("DEPLOYMENT", ""),
+        "folder": deployment.folder(),
         "domain": cfg.derived["API_DOMAIN"] or "—",
         "hosts": cfg.hosts,
         "primary": cfg.primary_host or "—",
         "problems": [dataclasses.asdict(p) for p in problems],
         "errors": sum(1 for p in problems if p.level == "error"),
         "warnings": sum(1 for p in problems if p.level == "warn"),
+        # Shown only once a server size is set (Configure → Server size).
+        "budget": cfg.budget_report(),
     }

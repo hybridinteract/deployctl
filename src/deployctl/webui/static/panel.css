@@ -246,6 +246,14 @@ tr:last-child td { border-bottom:0; }
 .problems { margin:.35rem 0 .1rem; padding-left:1.1rem; line-height:1.55; }
 .problems li.err { color:var(--danger); }
 .problems li.warn { color:var(--warn); }
+/* The server budget under the problems (Configure → Server size). */
+.budget { margin-top:.5rem; border-collapse:collapse; font-size:.92em; }
+.budget caption { text-align:left; padding-bottom:.2rem; }
+.budget th, .budget td { padding:.12rem .9rem .12rem 0; text-align:left; }
+.budget th { color:var(--muted); font-weight:500; }
+.budget tfoot td { border-top:1px solid var(--border); }
+.budget tr.err td { color:var(--danger); }
+.budget tr.warn td { color:var(--warn); }
 
 /* ===== Configure form ===================================================== */
 

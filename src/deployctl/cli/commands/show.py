@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import typer
 
 from .. import paths, ui
@@ -62,7 +64,57 @@ def config(
     ui.info(f"config files: {paths.CONFIG_DIR.relative_to(paths.ROOT)}/{{common,{cfg.env},secrets.{cfg.env}}}.env")
 
 
+def _mib(value) -> str:
+    return "?" if value is None else f"{value:.0f} MiB"
+
+
+def budget(
+    env: str = env_option(),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable, for the control panel."),
+) -> None:
+    """Each container's memory and CPU limits, added up per host, against the server's size.
+
+    The server's size is SERVER_MEMORY and SERVER_CPUS; without them the limits are
+    only added up. validate judges the same numbers: more memory than the server
+    has is an error, less than 15% left over a warning.
+    """
+    cfg = load_config(env, require_valid=False)
+    report = cfg.budget_report()
+    if as_json:
+        print(json.dumps({"ok": True, "env": cfg.env, "budget": report}, indent=2))
+        return
+
+    ui.header(f"Server budget — {cfg.env}")
+    for row in report:
+        if len(report) > 1:
+            ui.info(f"each {row['role']} host")
+        print(f"  {'service':<16}{'memory':>12}{'cpus':>8}")
+        for line in row["lines"]:
+            print(f"  {line['service']:<16}{line['memory'] or '(none)':>12}{line['cpus'] or '(none)':>8}")
+        print(f"  {'-' * 36}")
+        cpus = "?" if row["cpus"] is None else f"{row['cpus']:g}"
+        print(f"  {'limits':<16}{_mib(row['memory_mib']):>12}{cpus:>8}")
+        print(f"  {'system reserve':<16}{_mib(row['reserve_mib']):>12}")
+        if row["server_memory_mib"] is not None or row["server_cpus"] is not None:
+            server_cpus = "" if row["server_cpus"] is None else f"{row['server_cpus']:g}"
+            server_mem = "" if row["server_memory_mib"] is None else _mib(row["server_memory_mib"])
+            print(f"  {'server':<16}{server_mem:>12}{server_cpus:>8}")
+        if row["free_mib"] is not None:
+            print(f"  {'free':<16}{_mib(row['free_mib']):>12}  ({row['free_pct']}% of the server)")
+        print()
+
+    if report and report[0]["server_memory_mib"] is None:
+        ui.hint(f"set SERVER_MEMORY and SERVER_CPUS in config/{cfg.env}.env (or the panel's Server size) "
+                "to check these against the server")
+    else:
+        for problem in cfg.validate():
+            if any(word in problem.message for word in ("SERVER_MEMORY", "SERVER_CPUS", "free if every")):
+                (ui.error if problem.level == "error" else ui.warn)(problem.message)
+    ui.info("limits are ceilings, not reservations: memory a container does not use stays free")
+
+
 config_app.command("show")(config)
+config_app.command("budget")(budget)
 config_app.command("export")(transfer_cmd.export)
 config_app.command("import")(transfer_cmd.import_)
 

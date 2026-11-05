@@ -61,10 +61,19 @@ class Project:
 
     @property
     def deploy_dir(self) -> pathlib.Path | None:
-        """Where its configuration is now — found again if the directory moved (``adopt``)."""
+        """Where its configuration is now — found again if the directory moved (``adopt``).
+
+        Only the repository's own folder is looked for again (``deployctl/`` became
+        ``deploy/``). One of several deploy folders that is gone stays gone: the
+        repository's other folder is another deployment, never this one.
+        """
         repo = pathlib.Path(self.root)
         recorded = repo / self.deploy
-        return recorded if paths.is_project_root(recorded) else paths.find_deploy_dir(repo)
+        if paths.is_project_root(recorded):
+            return recorded
+        if self.deploy in (*paths.PROJECT_DIR_NAMES, "."):
+            return paths.find_deploy_dir(repo)
+        return None
 
     @property
     def url(self) -> str:
@@ -107,8 +116,22 @@ def find(name: str) -> Project | None:
 
 
 def for_repo(repo: pathlib.Path) -> Project | None:
+    """The repository's own deploy folder's entry (its ``deploy/``), else its first one."""
     repo = repo.resolve()
-    return next((p for p in load() if pathlib.Path(p.root) == repo), None)
+    entries = [p for p in load() if pathlib.Path(p.root) == repo]
+    own = paths.find_deploy_dir(repo)
+    return next((p for p in entries if own and p.deploy_dir and p.deploy_dir.resolve() == own.resolve()),
+                entries[0] if entries else None)
+
+
+def for_deploy_dir(deploy_dir: pathlib.Path) -> Project | None:
+    """The entry for one deploy folder — a repository can hold several (cli/deployment.py)."""
+    return _entry_for(load(), deploy_dir)
+
+
+def _entry_for(entries: list[Project], deploy_dir: pathlib.Path) -> Project | None:
+    target = deploy_dir.resolve()
+    return next((p for p in entries if p.deploy_dir is not None and p.deploy_dir.resolve() == target), None)
 
 
 # ---- what is at a path ------------------------------------------------------------------
@@ -166,6 +189,11 @@ def add(path: pathlib.Path, name: str | None = None, port: int | None = None) ->
 
     Idempotent: adding a project again keeps its name and port unless new ones
     are given. Without ``name`` it is the project's PROJECT_NAME, made unique.
+
+    One entry per deploy FOLDER, not per repository: ``deploy/`` and
+    ``deploy-sentinel/`` of one repository are two projects, each with its own
+    panel and port. ``path`` is a repository (its own ``deploy/``) or a deploy
+    folder itself.
     """
     repo, deploy_dir = inspect(path)
     if name is not None and not _NAME.fullmatch(name):
@@ -174,7 +202,7 @@ def add(path: pathlib.Path, name: str | None = None, port: int | None = None) ->
         raise RegistryError(f"port {port} cannot be used — pick one from 1024 to 65535, other than {HOME_PORT}")
     with home.locked(registry_file()):
         projects = load()
-        existing = next((p for p in projects if pathlib.Path(p.root) == repo), None)
+        existing = _entry_for(projects, deploy_dir)
         others = [p for p in projects if p is not existing]
 
         if name is not None and any(p.name == name for p in others):
@@ -222,8 +250,15 @@ def remove(name: str) -> Project:
 
 
 def _default_name(repo: pathlib.Path, deploy_dir: pathlib.Path) -> str:
-    name = read_env_file(deploy_dir / "config" / "common.env").get("PROJECT_NAME", "")
-    return name if _NAME.fullmatch(name) else re.sub(r"[^A-Za-z0-9._-]", "-", repo.name)[:64] or "project"
+    common = read_env_file(deploy_dir / "config" / "common.env")
+    name = common.get("PROJECT_NAME", "")
+    if _NAME.fullmatch(name):
+        return name
+    fallback = re.sub(r"[^A-Za-z0-9._-]", "-", repo.name)[:64] or "project"
+    # A further deployment registered before its PROJECT_NAME is filled in (`init
+    # --deployment`): the repository's name alone would be the other folder's.
+    deployment = common.get("DEPLOYMENT", "")
+    return f"{fallback[:48]}-{deployment}" if deployment and _NAME.fullmatch(f"x{deployment}") else fallback
 
 
 def _unique(name: str, others: list[Project]) -> str:

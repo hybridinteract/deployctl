@@ -20,7 +20,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from deployctl.cli import paths
+from deployctl.cli import deployment, paths
 from deployctl.cli.config import Config
 
 from . import runner
@@ -98,7 +98,8 @@ def local_facts(cfg: Config) -> dict:
     errors = [p for p in cfg.validate() if p.level == "error"]
     return {
         "configured": bool(cfg.hosts) and not errors,
-        "workflows": (paths.REPO_ROOT / ".github" / "workflows" / "deploy.yml").is_file(),
+        # This deployment's own deploy workflow: deploy.yml, or deploy-<name>.yml.
+        "workflows": (paths.REPO_ROOT / ".github" / "workflows" / deployment.of(cfg).deploy_workflow).is_file(),
         "ci_scope": bool(cfg.raw.get("CI_SCOPE")),
         "branch": cfg.raw.get("DEPLOY_BRANCH") or "main",
         # Where images are built, when that is not the deploy branch (release.yml).

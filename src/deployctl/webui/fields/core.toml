@@ -124,6 +124,27 @@ placeholder = "512m"
 help = "Docker memory cap for celery_worker. ffmpeg jobs count against it too. Too small and the worker restarts in a loop while deploys still pass."
 
 [[section.field]]
+key = "API_CPUS"
+label = "API CPU limit"
+target = "env"
+placeholder = "1.0"
+help = "How many cores the api container may use at most, e.g. 2.0. A ceiling, not a reservation."
+
+[[section.field]]
+key = "WORKER_CPUS"
+label = "Worker CPU limit"
+target = "env"
+placeholder = "1.0"
+help = "How many cores celery_worker may use at most. Keep it below the API's so heavy jobs cannot slow the screens."
+
+[[section.field]]
+key = "FORWARDED_ALLOW_IPS"
+label = "Trusted proxies (gunicorn)"
+target = "env"
+placeholder = "*"
+help = "Who gunicorn takes X-Forwarded-For from, in its default command. Behind this stack's own nginx: 127.0.0.1 plus the compose network, e.g. 127.0.0.1,172.22.0.0/16. Ignored when project.env sets APP_COMMAND."
+
+[[section.field]]
 key = "LOG_LEVEL"
 label = "Log level"
 target = "env"
@@ -137,6 +158,61 @@ target = "env"
 type = "select"
 options = ["false", "true"]
 help = "/docs is additionally protected by the htpasswd file on each host."
+
+[[section]]
+id = "server-size"
+title = "Server size"
+description = "The size of one host. With it, validate adds up every container's memory and CPU limits and says when they don't fit (deployctl config budget shows the table). Leave empty to skip the check."
+
+[[section.field]]
+key = "SERVER_MEMORY"
+label = "Memory"
+target = "env"
+placeholder = "8g"
+help = "The droplet's RAM, e.g. 8g. Limits plus the system reserve above this are an error."
+
+[[section.field]]
+key = "SERVER_CPUS"
+label = "vCPUs"
+target = "env"
+placeholder = "4"
+help = "The droplet's vCPUs. CPU limits above this only warn: they are ceilings, and containers share cores."
+
+[[section.field]]
+key = "SYSTEM_RESERVE_MEMORY"
+label = "Kept for the system"
+target = "env"
+placeholder = "700m"
+help = "What the OS, Docker and sshd need outside the containers."
+
+[[section]]
+id = "services"
+title = "Other services"
+description = "The smaller containers. The defaults suit any server; raise them only if docker stats shows one at its limit."
+
+[[section.field]]
+key = "NGINX_MEM_LIMIT"
+label = "nginx memory limit"
+target = "env"
+placeholder = "128m"
+
+[[section.field]]
+key = "NGINX_CPUS"
+label = "nginx CPU limit"
+target = "env"
+placeholder = "0.25"
+
+[[section.field]]
+key = "BEAT_MEM_LIMIT"
+label = "Celery Beat memory limit"
+target = "env"
+placeholder = "256m"
+
+[[section.field]]
+key = "BEAT_CPUS"
+label = "Celery Beat CPU limit"
+target = "env"
+placeholder = "0.2"
 
 [[section]]
 id = "cicd"

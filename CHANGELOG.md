@@ -3,6 +3,63 @@
 Versions are git tags (`vX.Y.Z`); projects install one with
 `uv tool install git+https://github.com/hybridinteract/deployctl@vX.Y.Z`.
 
+## 0.16.0
+
+**Added**
+- **Several deployments in one repository.** One app and one image can now run in several
+  places, each from its own deploy folder (`deploy/`, `deploy-sentinel/`, …) released by its
+  own branch. `DEPLOYMENT=<name>` in a folder's `config/common.env` gives that folder its own
+  everything:
+  - workflows `deploy-<name>.yml` and `release-<name>.yml`;
+  - GitHub secrets and variables, suffixed `_<NAME>` (config bundle, CI key, pinned host
+    keys, `AUTO_DEPLOY`, `APP_URL`);
+  - GitHub environment and deploy lock;
+  - control panel, on its own port.
+
+  `deployctl init --deployment <name>` creates one beside `deploy/`. On GitHub Free, where a
+  private repository has one set of secrets, this is what stops a second deployment's
+  `ci sync-config` or `setup-key` from replacing the first one's. See *Several deployments in
+  one repository* in docs/35.
+- **Every container's limits are configurable.** The template used to fix four of them. New
+  keys: `NGINX_MEM_LIMIT`/`NGINX_CPUS`, `CERTBOT_*`, `BEAT_*` and `REDIS_CPUS`. Their
+  defaults are the values the template fixed. `FORWARDED_ALLOW_IPS` narrows who gunicorn's
+  default command trusts, so a project no longer replaces the whole `APP_COMMAND` for that,
+  and `API_WORKERS` keeps working.
+- **A server budget.** Set `SERVER_MEMORY` and `SERVER_CPUS` (*Configure → Server size*), and
+  `validate` adds every container's limits up per host:
+  - limits plus `SYSTEM_RESERVE_MEMORY` (default 700m) above the server's memory: **error**;
+  - less than 15% left: warning;
+  - CPU limits above the cores: warning.
+
+  `deployctl config budget` prints the table, and the panel shows it under the problems.
+- The single-server Configure form gained the Postgres port (managed databases listen on
+  25060), and the container memory and CPU limits for Postgres and Redis.
+
+**Unchanged, on purpose**
+- **A project without `DEPLOYMENT` and without the new keys stays as it was:**
+  - its compose, env, nginx and Redis files render byte for byte as on 0.15.0;
+  - its generated workflows are byte-identical;
+  - its config bundle and digest are the same, and a 0.14 `deploy.yml` in CI still decodes
+    a bundle 0.16 uploads;
+  - `validate` finds nothing new.
+- An unreadable or blank memory or CPU limit is a warning, never an error, so no existing
+  configuration starts failing. A blank one is flagged because compose then runs the
+  container with no limit.
+
+**Safer**
+- `ci` commands from a second deploy folder with no `DEPLOYMENT` stop before touching GitHub,
+  since they would act on `deploy/`'s names.
+- Two folders sharing a `DEPLOYMENT` or a `DEPLOY_BRANCH` is a `validate` error.
+- In a repository with several folders, every deploy and `ci` command first says which folder
+  it acts on.
+- **Hints name the folder they are for.** From the repository's root, a bare `deployctl`
+  means `deploy/`. So a next step suggested while working in `deploy-sentinel/` reads
+  `deployctl --project-dir deploy-sentinel …`, in the CLI's messages and in the bash
+  engine's (`DEPLOYCTL_CLI`). Copying a hint can no longer act on the other deployment.
+  Where a bare `deployctl` already means the folder, which covers every single-folder
+  project and `deploy/` itself, the text is unchanged.
+- `ci unpack --deployment` refuses a bundle made for another deployment.
+
 ## 0.15.0
 
 **Added**

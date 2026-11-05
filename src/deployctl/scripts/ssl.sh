@@ -143,7 +143,7 @@ running_server_names() {
 # validation attempt against the weekly rate limit.
 check_challenge_path() {
     if ! remote "$HOST" "docker ps --format '{{.Names}}' | grep -q '${CONTAINER_PREFIX}_nginx'"; then
-        print_error "nginx is not running on ${HOST} — deploy first: deployctl deploy init"
+        print_error "nginx is not running on ${HOST} — deploy first: ${DEPLOYCTL_CLI:-deployctl} deploy init"
         return 1
     fi
     print_success "nginx is running on ${HOST}"
@@ -154,7 +154,7 @@ check_challenge_path() {
     print_info "proving the ACME challenge path (a probe file, no issuance spent)"
     if ! certbot_sh "mkdir -p /var/www/certbot/.well-known/acme-challenge && printf %s ${token} > /var/www/certbot/.well-known/acme-challenge/${token}" >/dev/null 2>&1; then
         print_error "could not write into the ACME webroot on ${HOST}"
-        print_error "  → the certbot container cannot reach ${REMOTE_DIR}/certbot/www — re-run: deployctl deploy update"
+        print_error "  → the certbot container cannot reach ${REMOTE_DIR}/certbot/www — re-run: ${DEPLOYCTL_CLI:-deployctl} deploy update"
         return 1
     fi
 
@@ -176,13 +176,13 @@ check_challenge_path() {
         print_error "  → the host has the new config on disk but the container is still on the old one."
         print_error "    nginx.conf/site.conf are single-file bind mounts, so a reload cannot pick up"
         print_error "    an rsynced file — the container has to be recreated:"
-        print_error "      deployctl deploy update --env ${DEPLOYCTL_ENV}"
+        print_error "      ${DEPLOYCTL_CLI:-deployctl} deploy update --env ${DEPLOYCTL_ENV}"
     else
         print_error "  nginx answered, but not with the probe file. Check in this order:"
         print_error "    • ${API_DOMAIN} resolves to ${HOST} and nothing in front filters :80"
         print_error "    • the running config serves /.well-known/acme-challenge/ from /var/www/certbot"
         print_error "      (${CONTAINER_PREFIX}_nginx serves: ${serving:-<none found>})"
-        print_error "    • the webroot is mounted into BOTH nginx and certbot: deployctl deploy doctor"
+        print_error "    • the webroot is mounted into BOTH nginx and certbot: ${DEPLOYCTL_CLI:-deployctl} deploy doctor"
     fi
     return 1
 }
@@ -235,7 +235,7 @@ reload_nginx_checked() {
         compose_on "$HOST" primary "exec -T nginx nginx -s reload"
         print_success "nginx reloaded with the new certificate"
     else
-        print_error "nginx -t failed — NOT reloading; inspect: deployctl deploy logs"
+        print_error "nginx -t failed — NOT reloading; inspect: ${DEPLOYCTL_CLI:-deployctl} deploy logs"
         return 1
     fi
 }
@@ -254,7 +254,7 @@ cmd_setup() {
     case $dns_rc in
         0) ;;
         2) print_error "refusing to request a certificate that cannot be validated"
-           print_error "  → rehearse against the staging CA once DNS is fixed: deployctl ssl setup --staging"
+           print_error "  → rehearse against the staging CA once DNS is fixed: ${DEPLOYCTL_CLI:-deployctl} ssl setup --staging"
            exit 1 ;;
         *) confirm_action "DNS does not point at the target yet. Continue anyway?" || exit 1 ;;
     esac
@@ -283,7 +283,7 @@ cmd_setup() {
     reload_nginx_checked
     print_separator
     print_success "https://${API_DOMAIN} is live"
-    print_info "renewal is automatic: the certbot container checks twice a day; 'deployctl ssl check' shows expiry"
+    print_info "renewal is automatic: the certbot container checks twice a day; '${DEPLOYCTL_CLI:-deployctl} ssl check' shows expiry"
 }
 
 cmd_renew() {
@@ -299,13 +299,13 @@ cmd_check() {
     local info
     info="$(remote "$HOST" "openssl x509 -in '${LIVE_DIR}/fullchain.pem' -noout -issuer -subject -enddate 2>/dev/null" || true)"
     if [[ -z "$info" ]]; then
-        print_error "no certificate found at ${LIVE_DIR} — run: deployctl ssl setup"
+        print_error "no certificate found at ${LIVE_DIR} — run: ${DEPLOYCTL_CLI:-deployctl} ssl setup"
         exit 1
     fi
     print_info "on disk (${LIVE_DIR}):"
     while IFS= read -r line; do echo "  $line"; done <<< "$info"
     if [[ "$info" == *"CN=${API_DOMAIN}"*issuer*"CN=${API_DOMAIN}"* || "$(echo "$info" | grep -c "${API_DOMAIN}")" -ge 2 ]]; then
-        print_warning "issuer and subject match — this looks like the self-signed bootstrap certificate; run: deployctl ssl setup"
+        print_warning "issuer and subject match — this looks like the self-signed bootstrap certificate; run: ${DEPLOYCTL_CLI:-deployctl} ssl setup"
     fi
 
     # The file on disk is what certbot last wrote, not what visitors get: nginx
@@ -317,7 +317,7 @@ cmd_check() {
         print_warning "could not read the certificate nginx is serving on ${HOST}:443"
     elif [[ "$served" != "$on_disk" ]]; then
         print_warning "nginx is serving an OLDER certificate (expires ${served}) than the one on disk"
-        print_warning "  → it has not reloaded since the renewal: deployctl deploy restart --env ${DEPLOYCTL_ENV}"
+        print_warning "  → it has not reloaded since the renewal: ${DEPLOYCTL_CLI:-deployctl} deploy restart --env ${DEPLOYCTL_ENV}"
     else
         print_success "nginx is serving this certificate"
     fi

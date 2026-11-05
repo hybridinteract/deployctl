@@ -74,9 +74,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
-    mem_limit: 128m
-    memswap_limit: 128m
-    cpus: 0.25
+    mem_limit: {{ NGINX_MEM_LIMIT }}
+    memswap_limit: {{ NGINX_MEM_LIMIT }}
+    cpus: {{ NGINX_CPUS }}
 
 {% if WITH_CERTBOT %}
   # ---- Certificate renewal ------------------------------------------------
@@ -92,9 +92,9 @@ services:
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
     networks:
       - {{ NETWORK_PREFIX }}_network
-    mem_limit: 64m
-    memswap_limit: 64m
-    cpus: 0.1
+    mem_limit: {{ CERTBOT_MEM_LIMIT }}
+    memswap_limit: {{ CERTBOT_MEM_LIMIT }}
+    cpus: {{ CERTBOT_CPUS }}
 
 {% endif %}
 {% if WITH_POSTGRES %}
@@ -177,7 +177,7 @@ services:
       start_period: 10s
     mem_limit: {{ REDIS_MEM_LIMIT }}
     memswap_limit: {{ REDIS_MEM_LIMIT }}
-    cpus: 0.5
+    cpus: {{ REDIS_CPUS }}
 
 {% endif %}
   # ---- Application --------------------------------------------------------
@@ -201,7 +201,7 @@ services:
       --graceful-timeout 30
       --keep-alive 5
       --preload
-      --forwarded-allow-ips='*'
+      --forwarded-allow-ips='{{ FORWARDED_ALLOW_IPS }}'
       --access-logfile -
       --error-logfile -
       --log-level {{ LOG_LEVEL | lower }}
@@ -382,9 +382,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    mem_limit: 256m
-    memswap_limit: 256m
-    cpus: 0.2
+    mem_limit: {{ BEAT_MEM_LIMIT }}
+    memswap_limit: {{ BEAT_MEM_LIMIT }}
+    cpus: {{ BEAT_CPUS }}
 
 {% endif %}
 networks:

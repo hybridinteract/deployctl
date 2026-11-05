@@ -200,7 +200,7 @@ async def project_new(request: Request):
     if code != 0:
         return _result(request, error=" ".join(output.strip().splitlines()[-3:]))
     try:
-        project = project_list.for_repo(root)
+        project = project_list.for_repo(root)  # its deploy/, just created — for_repo prefers it
     except project_list.RegistryError as exc:
         return _result(request, error=str(exc))
     if project is None:

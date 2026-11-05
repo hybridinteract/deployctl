@@ -70,28 +70,34 @@ def collect(env: str) -> dict[str, str]:
     return files
 
 
-def _canonical(files: dict[str, str]) -> bytes:
-    return json.dumps(
-        {"format": FORMAT, "files": files}, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode()
+def _canonical(files: dict[str, str], deployment: str = "") -> bytes:
+    body: dict = {"format": FORMAT, "files": files}
+    # Only when there is one, so an unnamed deployment's bundle — and its digest —
+    # is byte for byte what every earlier version made (cli/deployment.py).
+    if deployment:
+        body["deployment"] = deployment
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def digest(files: dict[str, str]) -> str:
+def digest(files: dict[str, str], deployment: str = "") -> str:
     """A content digest: the same files give the same digest on any machine."""
-    return "sha256:" + hashlib.sha256(_canonical(files)).hexdigest()
+    return "sha256:" + hashlib.sha256(_canonical(files, deployment)).hexdigest()
 
 
-def encode(files: dict[str, str]) -> str:
+def encode(files: dict[str, str], deployment: str = "") -> str:
     """The secret's value: canonical JSON, gzipped (``mtime=0``, so reproducible), base64."""
-    return base64.b64encode(gzip.compress(_canonical(files), mtime=0)).decode("ascii")
+    return base64.b64encode(gzip.compress(_canonical(files, deployment), mtime=0)).decode("ascii")
 
 
-def decode(blob: str, env: str) -> dict[str, str]:
+def decode(blob: str, env: str, deployment: str = "") -> dict[str, str]:
     """Read a bundle back, accepting only this environment's own file names.
 
     The names become paths under ``config/``, so anything outside the fixed list
     is refused outright rather than sanitised — including a bundle made for a
-    different environment, which is the realistic way to get one.
+    different environment, which is the realistic way to get one. A bundle made
+    for another deployment of the repository is refused the same way: two
+    deployments both call their environment ``production``, so the file names
+    alone cannot tell them apart.
     """
     try:
         raw = gzip.decompress(base64.b64decode("".join(blob.split()), validate=True))
@@ -101,6 +107,13 @@ def decode(blob: str, env: str) -> dict[str, str]:
 
     if not isinstance(data, dict) or data.get("format") != FORMAT or not isinstance(data.get("files"), dict):
         raise BundleError(f"{SECRET_NAME} is not a format-{FORMAT} deployctl config bundle")
+    made_for = data.get("deployment", "")
+    if made_for != deployment:
+        raise BundleError(
+            f"the bundle was made for {'deployment ' + repr(made_for) if made_for else 'the unnamed deployment'}, "
+            f"and this is {'deployment ' + repr(deployment) if deployment else 'the unnamed one'} — "
+            "was the wrong secret passed to this workflow?"
+        )
 
     allowed = {p.name for p in members(env)}
     files: dict[str, str] = data["files"]

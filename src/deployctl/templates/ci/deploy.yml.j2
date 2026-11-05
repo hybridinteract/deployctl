@@ -3,22 +3,28 @@
 # Deploys an already-published image with deployctl — the same engine, deploy
 # lock and guards as a deploy from a laptop, run from here.
 #
+{% if DEPLOYMENT %}
+# Deployment «DEPLOYMENT» — the folder «PROJECT_DIR»/. One of several deployments of
+# this repository, each with its own workflows, secrets (*_«DEPLOYMENT|upper|replace('-', '_')»)
+# and lock, so a run here never reads or replaces another deployment's.
+#
+{% endif %}
 {% if RELEASES %}
-#   automatic  release.yml calls this after a push to «DEPLOY_BRANCH» — merging
+#   automatic  «RELEASE_WORKFLOW» calls this after a push to «DEPLOY_BRANCH» — merging
 #              «BUILD_BRANCH» into it — with the image «BUILD_BRANCH»'s checks passed,
-#              when the repository variable AUTO_DEPLOY is 'true'
+#              when the repository variable «AUTO_DEPLOY_VAR» is 'true'
 {% else %}
 #   automatic  ci.yml calls this after a push to «DEPLOY_BRANCH» passed its checks
-#              and published, when the repository variable AUTO_DEPLOY is 'true'
+#              and published, when the repository variable «AUTO_DEPLOY_VAR» is 'true'
 {% endif %}
-#   manual     Actions → deploy → Run workflow from «DEPLOY_BRANCH», or
-#              `deployctl ci deploy`: a tag, a config change, or a rollback
+#   manual     Actions → «WORKFLOW_NAME» → Run workflow from «DEPLOY_BRANCH», or
+#              `«CLI» ci deploy`: a tag, a config change, or a rollback
 #
 # Nothing here builds, and nothing here needs the application's dependencies:
 # the job installs deployctl «TOOL_REF» and tells the hosts which image to run.
-# Setup — keys, secrets, variables: `deployctl ci doctor` lists what is missing.
+# Setup — keys, secrets, variables: `«CLI» ci doctor` lists what is missing.
 
-name: deploy
+name: «WORKFLOW_NAME»
 run-name: ${{ inputs.action || 'update' }} ${{ inputs.tag }} → ${{ inputs.environment }}
 
 on:
@@ -33,7 +39,7 @@ on:
       # A plain string, not `type: environment`: that dropdown lists configured
       # GitHub environments, and a private repository on GitHub Free has none.
       environment:
-        description: Environment to deploy to (a deploy/config/<name>.env)
+        description: Environment to deploy to (a «CONFIG_HINT_DIR»/config/<name>.env)
         type: string
         default: «ENV»
         required: true
@@ -68,14 +74,19 @@ jobs:
     # own secrets, readable only from its allowed branches; on GitHub Free with a
     # private repository, secrets.* and vars.* resolve to the repository's.
     environment:
-      name: ${{ inputs.environment }}
-      url: ${{ vars.APP_URL }}
+      name: «GH_ENV»
+      url: ${{ vars.«APP_URL_VAR» }}
     # One deploy per environment at a time, never cancelled mid-roll. The lock on
     # the primary also keeps a laptop deploy from interleaving with this one.
     concurrency:
-      group: deploy-${{ inputs.environment }}
+      group: deploy-«GH_ENV»
       cancel-in-progress: false
     env:
+{% if DEPLOYMENT %}
+      # This deployment's folder: every deployctl command below acts on it, never
+      # on another deploy folder of the repository.
+      DEPLOYCTL_PROJECT: ${{ github.workspace }}/«PROJECT_DIR»
+{% endif %}
       # Prefixed so they cannot collide with a deployctl config key: the process
       # environment overrides any key the config defines.
       DEPLOY_ENV: ${{ inputs.environment }}
@@ -131,11 +142,11 @@ jobs:
 
       - name: SSH identity and pinned host keys
         env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+          SSH_KEY: ${{ secrets.«SSH_KEY_SECRET» }}
+          KNOWN_HOSTS: ${{ vars.«KNOWN_HOSTS_VAR» }}
         run: |
-          [[ -n "$SSH_KEY" ]] || { echo "::error::DEPLOY_SSH_KEY is not set — run: deployctl ci setup-key"; exit 1; }
-          [[ -n "$KNOWN_HOSTS" ]] || { echo "::error::DEPLOY_KNOWN_HOSTS is not set — run: deployctl ci pin-hosts"; exit 1; }
+          [[ -n "$SSH_KEY" ]] || { echo "::error::«SSH_KEY_SECRET» is not set — run: «CLI» ci setup-key"; exit 1; }
+          [[ -n "$KNOWN_HOSTS" ]] || { echo "::error::«KNOWN_HOSTS_VAR» is not set — run: «CLI» ci pin-hosts"; exit 1; }
           install -d -m 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
@@ -145,9 +156,9 @@ jobs:
       # can print one, and refuses a bundle that does not match its digest.
       - name: Load the deploy config
         env:
-          DEPLOYCTL_CONFIG: ${{ secrets.DEPLOYCTL_CONFIG }}
-          DEPLOYCTL_CONFIG_DIGEST: ${{ vars.DEPLOYCTL_CONFIG_DIGEST }}
-        run: deployctl ci unpack --env "$DEPLOY_ENV"
+          DEPLOYCTL_CONFIG: ${{ secrets.«CONFIG_SECRET» }}
+          DEPLOYCTL_CONFIG_DIGEST: ${{ vars.«CONFIG_DIGEST» }}
+        run: deployctl ci unpack --env "$DEPLOY_ENV"«UNPACK_ARGS»
 
       - name: Deploy
         env:
@@ -184,7 +195,7 @@ jobs:
             if [[ "$RESULT" != success ]]; then
               echo ""
               echo "A failed release is reverted on every host it reached. To go back further:"
-              echo "\`deployctl ci deploy --env ${DEPLOY_ENV} --rollback\`"
+              echo "\`«CLI» ci deploy --env ${DEPLOY_ENV} --rollback\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -203,4 +214,4 @@ jobs:
 
       - name: Remove credentials
         if: always()
-        run: rm -rf ~/.ssh/id_ed25519 deploy/config deploy/generated deployctl/config deployctl/generated
+        run: rm -rf ~/.ssh/id_ed25519 «CLEANUP»
