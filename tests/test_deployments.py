@@ -323,6 +323,50 @@ def test_a_named_folder_that_is_gone_is_not_mistaken_for_deploy(repo):
     assert projects.Project("main", str(repo), 8767, "deploy").deploy_dir == repo / "deploy"
 
 
+# ---- the commands a message suggests ---------------------------------------------------------------
+
+
+def test_a_suggested_command_names_the_folder_it_is_for(repo):
+    """From the repository's root a bare `deployctl` means deploy/: a hint printed
+    while working on deploy-sentinel/ must never send the operator there."""
+    from deployctl.cli import ui
+
+    cfg = _use(repo / "deploy-sentinel")
+    assert ui.scoped("then: deployctl ssl setup --env production") == \
+        "then: deployctl --project-dir deploy-sentinel ssl setup --env production"
+    # Prose and versions are not commands.
+    assert ui.scoped("deployctl did not write it (deployctl 0.16.0)") == "deployctl did not write it (deployctl 0.16.0)"
+    # Already scoped: left as it is.
+    text = "deployctl --project-dir deploy-sentinel ci init"
+    assert ui.scoped(text) == text
+    assert cfg.bash_env()["DEPLOYCTL_CLI"] == "deployctl --project-dir deploy-sentinel"
+
+
+def test_deploys_own_hints_are_unchanged(repo):
+    from deployctl.cli import ui
+
+    cfg = _use(repo / "deploy")
+    assert ui.scoped("then: deployctl ssl setup --env production") == "then: deployctl ssl setup --env production"
+    assert cfg.bash_env()["DEPLOYCTL_CLI"] == "deployctl"
+
+
+def test_the_engine_prints_the_scoped_command(tmp_path):
+    """The bash engine's hints read DEPLOYCTL_CLI, and say plain `deployctl` without it."""
+    import subprocess
+
+    script = paths.TOOL_ROOT / "scripts" / "common" / "remote.sh"
+    text = script.read_text()
+    assert "${DEPLOYCTL_CLI:-deployctl} deploy unlock" in text
+    probe = 'source "$1"; print_warning "run: ${DEPLOYCTL_CLI:-deployctl} ssl setup"'
+    common = paths.TOOL_ROOT / "scripts" / "common" / "common.sh"
+    scoped = "deployctl --project-dir deploy-sentinel"
+    for value, expected in ((scoped, f"run: {scoped} ssl setup"), (None, "run: deployctl ssl setup")):
+        env = {"PATH": "/usr/bin:/bin", "NO_COLOR": "1", **({"DEPLOYCTL_CLI": value} if value else {})}
+        out = subprocess.run(["bash", "-c", probe, "probe", str(common)], capture_output=True, text=True, env=env,
+                             check=False)
+        assert expected in out.stdout + out.stderr
+
+
 # ---- init --deployment ---------------------------------------------------------------------------------
 
 

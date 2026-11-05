@@ -52,6 +52,12 @@ Versions are git tags (`vX.Y.Z`); projects install one with
 - Two folders sharing a `DEPLOYMENT` or a `DEPLOY_BRANCH` is a `validate` error.
 - In a repository with several folders, every deploy and `ci` command first says which folder
   it acts on.
+- **Hints name the folder they are for.** From the repository's root, a bare `deployctl`
+  means `deploy/`. So a next step suggested while working in `deploy-sentinel/` reads
+  `deployctl --project-dir deploy-sentinel …`, in the CLI's messages and in the bash
+  engine's (`DEPLOYCTL_CLI`). Copying a hint can no longer act on the other deployment.
+  Where a bare `deployctl` already means the folder, which covers every single-folder
+  project and `deploy/` itself, the text is unchanged.
 - `ci unpack --deployment` refuses a bundle made for another deployment.
 
 ## 0.15.0

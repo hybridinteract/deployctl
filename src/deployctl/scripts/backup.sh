@@ -121,7 +121,7 @@ cmd_list() {
     if [[ -n "$scheduled" ]]; then
         print_info "scheduled on ${HOST}: ${scheduled% #*}"
     else
-        print_warning "no scheduled backup on ${HOST} — only dumps someone runs by hand (deployctl backup schedule)"
+        print_warning "no scheduled backup on ${HOST} — only dumps someone runs by hand (${DEPLOYCTL_CLI:-deployctl} backup schedule)"
     fi
     print_info "on ${HOST}:${BACKUP_DIR}"
     remote "$HOST" "ls -lht '${BACKUP_DIR}' 2>/dev/null | grep -v '^total' | sed 's/^/    /'" || print_warning "  none yet"
@@ -178,7 +178,7 @@ cmd_restore() {
             print_error "database '${target_db}' already has ${tables} table(s); a dump restores only into an empty one"
             print_error "  replaying it over existing data changes no rows and can wind sequences back"
             print_error "  → restore into a scratch database and check it there:"
-            print_error "      deployctl backup restore --env ${DEPLOYCTL_ENV} --file ${file} --db ${POSTGRES_DB}_restore"
+            print_error "      ${DEPLOYCTL_CLI:-deployctl} backup restore --env ${DEPLOYCTL_ENV} --file ${file} --db ${POSTGRES_DB}_restore"
             print_error "  → then swap it in with the app stopped: docs/30-OPERATIONS.md, \"Restoring production\""
             exit 1
         fi

@@ -287,7 +287,7 @@ arm_cleanup() {
 ensure_registry_login() {
     local host="$1"
     if [[ -z "${REGISTRY_TOKEN:-}" || -z "${REGISTRY_USER:-}" || -z "${REGISTRY_HOST:-}" ]]; then
-        print_warning "[$host] no registry login — assuming the image is public or the host is already logged in (deployctl access)"
+        print_warning "[$host] no registry login — assuming the image is public or the host is already logged in (${DEPLOYCTL_CLI:-deployctl} access)"
         return 0
     fi
     # Recorded before the attempt: a login that half-happened is logged out too.
@@ -342,7 +342,7 @@ ensure_bootstrap_cert() {
             cp '${live}/fullchain.pem' '${live}/chain.pem' &&
             echo BOOTSTRAP_CERT_CREATED
         fi" | grep -q BOOTSTRAP_CERT_CREATED \
-        && print_warning "[$host] created a 1-day self-signed bootstrap certificate — run 'deployctl ssl setup' to obtain the real one"
+        && print_warning "[$host] created a 1-day self-signed bootstrap certificate — run '${DEPLOYCTL_CLI:-deployctl} ssl setup' to obtain the real one"
     return 0
 }
 
@@ -383,7 +383,7 @@ reload_nginx() {
     if [[ "${DEPLOYCTL_DRY_RUN:-}" != "1" ]] && nginx_config_is_stale "$host"; then
         print_warning "[$host] the running nginx is on an older config — recreating the container to pick it up"
         compose_on "$host" "$role" "up -d --force-recreate nginx" || {
-            print_error "[$host] could not recreate nginx — inspect: deployctl deploy logs --host $host"
+            print_error "[$host] could not recreate nginx — inspect: ${DEPLOYCTL_CLI:-deployctl} deploy logs --host $host"
             return 1
         }
         return 0
@@ -429,10 +429,10 @@ wait_health() {
     code="$(remote "$host" "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -H 'Host: ${API_DOMAIN}' ${scheme}://localhost${HEALTH_PATH}" 2>/dev/null || echo 000)"
     print_error "[$host] not healthy after $((tries * 3))s (last ${HEALTH_PATH} status: ${code})"
     case "$code" in
-        400)     print_info "  → 400 'invalid host': the app rejects the Host nginx sends — regenerate artifacts (deployctl setup --force) and check TRUSTED_HOSTS" ;;
-        502|503) print_info "  → nginx is up but cannot reach the app. Inspect: deployctl deploy logs --host $host" ;;
-        000)     print_info "  → nginx is not answering. Inspect: deployctl deploy logs --host $host" ;;
-        *)       print_info "  → inspect: deployctl deploy logs --host $host" ;;
+        400)     print_info "  → 400 'invalid host': the app rejects the Host nginx sends — regenerate artifacts (${DEPLOYCTL_CLI:-deployctl} setup --force) and check TRUSTED_HOSTS" ;;
+        502|503) print_info "  → nginx is up but cannot reach the app. Inspect: ${DEPLOYCTL_CLI:-deployctl} deploy logs --host $host" ;;
+        000)     print_info "  → nginx is not answering. Inspect: ${DEPLOYCTL_CLI:-deployctl} deploy logs --host $host" ;;
+        *)       print_info "  → inspect: ${DEPLOYCTL_CLI:-deployctl} deploy logs --host $host" ;;
     esac
     return 1
 }
@@ -513,7 +513,7 @@ verify_services() {
         if [[ -n "$problems" ]]; then
             print_error "[$host] a service is failing after the release:"
             while IFS= read -r line; do print_error "  ${line}"; done <<< "$problems"
-            print_error "  → its logs: deployctl deploy logs --env ${DEPLOYCTL_ENV} --host ${host}"
+            print_error "  → its logs: ${DEPLOYCTL_CLI:-deployctl} deploy logs --env ${DEPLOYCTL_ENV} --host ${host}"
             return 1
         fi
     done
@@ -577,7 +577,7 @@ revert_host() {
     local extra="false"
     [[ "$restored" == *EXTRA* ]] && extra="true"
     if ! WITH_EXTRA_COMPOSE="$extra" compose_on "$host" "$role" "up -d --remove-orphans"; then
-        print_error "[$host] could not start the previous release — inspect: deployctl deploy logs --env ${DEPLOYCTL_ENV} --host ${host}"
+        print_error "[$host] could not start the previous release — inspect: ${DEPLOYCTL_CLI:-deployctl} deploy logs --env ${DEPLOYCTL_ENV} --host ${host}"
         return 1
     fi
     WITH_EXTRA_COMPOSE="$extra" reload_nginx "$host" "$role" || true
@@ -585,7 +585,7 @@ revert_host() {
         print_warning "[$host] reverted: serving ${previous:-the previous release} again"
         return 0
     fi
-    print_error "[$host] the previous release did not come back healthy either — inspect: deployctl deploy logs --env ${DEPLOYCTL_ENV} --host ${host}"
+    print_error "[$host] the previous release did not come back healthy either — inspect: ${DEPLOYCTL_CLI:-deployctl} deploy logs --env ${DEPLOYCTL_ENV} --host ${host}"
     return 1
 }
 
@@ -642,11 +642,11 @@ acquire_deploy_lock() {
             print_error "another run holds the deploy lock for '${DEPLOYCTL_ENV}' on ${PRIMARY_HOST}:"
             print_error "  ${verdict#*$'\n'}"
             print_error "  → wait for it to finish. If that run is gone (its machine crashed, or it was"
-            print_error "    killed outright), clear the lock with: deployctl deploy unlock --env ${DEPLOYCTL_ENV}"
+            print_error "    killed outright), clear the lock with: ${DEPLOYCTL_CLI:-deployctl} deploy unlock --env ${DEPLOYCTL_ENV}"
             ;;
         UNWRITABLE)
             print_error "cannot create ${LOCK_DIR} on ${PRIMARY_HOST} — is ${REMOTE_DIR} writable by '${SSH_USER}'?"
-            print_error "  → deployctl deploy doctor --env ${DEPLOYCTL_ENV}"
+            print_error "  → ${DEPLOYCTL_CLI:-deployctl} deploy doctor --env ${DEPLOYCTL_ENV}"
             ;;
         *)
             print_error "cannot reach ${SSH_USER}@${PRIMARY_HOST} to take the deploy lock"
@@ -659,7 +659,7 @@ release_deploy_lock() {
     [[ "$DEPLOY_LOCK_HELD" == "1" ]] || return 0
     DEPLOY_LOCK_HELD=0
     remote "$PRIMARY_HOST" "rm -rf '${LOCK_DIR}'" >/dev/null 2>&1 \
-        || print_warning "could not release ${LOCK_DIR} on ${PRIMARY_HOST} — clear it with: deployctl deploy unlock --env ${DEPLOYCTL_ENV}"
+        || print_warning "could not release ${LOCK_DIR} on ${PRIMARY_HOST} — clear it with: ${DEPLOYCTL_CLI:-deployctl} deploy unlock --env ${DEPLOYCTL_ENV}"
 }
 
 # ---- the live .env guard -------------------------------------------------------
@@ -747,7 +747,7 @@ check_live_env() {
         print_error "  this deploy would CHANGE config values ${host} is running with:${drifted}"
         print_error "  → a code-only deploy renders the same .env, so these come from the config copy it was"
         print_error "    given. If that copy is stale, sync it from the machine that last changed config:"
-        print_error "      deployctl ci sync-config --env ${DEPLOYCTL_ENV}"
+        print_error "      ${DEPLOYCTL_CLI:-deployctl} ci sync-config --env ${DEPLOYCTL_ENV}"
         print_error "  → changing them on purpose? deploy with allow_config_change (--allow-secret-change)"
         return 1
     fi
@@ -815,7 +815,7 @@ check_not_downgrade() {
     print_error "${PRIMARY_HOST} is running ${running}, which is NEWER than ${IMAGE_TAG}"
     print_error "  → this update would take ${DEPLOYCTL_ENV} backwards, migrating with the older image"
     print_error "  → a stale IMAGE_TAG in config/${DEPLOYCTL_ENV}.env is the usual cause: CI deployed since."
-    print_error "    Pick the running tag or a newer one (deployctl image tags)"
-    print_error "  → going back on purpose is a rollback: deployctl deploy rollback --env ${DEPLOYCTL_ENV} --to ${IMAGE_TAG}"
+    print_error "    Pick the running tag or a newer one (${DEPLOYCTL_CLI:-deployctl} image tags)"
+    print_error "  → going back on purpose is a rollback: ${DEPLOYCTL_CLI:-deployctl} deploy rollback --env ${DEPLOYCTL_ENV} --to ${IMAGE_TAG}"
     return 1
 }

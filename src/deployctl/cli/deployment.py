@@ -105,6 +105,21 @@ def folder() -> str:
         return paths.ROOT.name
 
 
+def cli_prefix() -> str:
+    """How to name THIS folder in a command typed at the repository's root.
+
+    ``deployctl`` wherever a bare ``deployctl`` from there finds this folder anyway
+    (the repository's deploy/, and every project with a single deploy folder);
+    ``deployctl --project-dir deploy-sentinel`` for any other — where a bare one
+    would act on deploy/, the other deployment. Used for every command a message
+    suggests (ui.scoped) and, as DEPLOYCTL_CLI, by the bash engine's hints.
+    """
+    own = paths.find_deploy_dir(paths.REPO_ROOT)
+    if own is None or not paths.is_project_root(paths.ROOT) or own.resolve() == paths.ROOT.resolve():
+        return "deployctl"
+    return f"deployctl --project-dir {folder()}"
+
+
 # ---- the other folders -------------------------------------------------------------
 
 

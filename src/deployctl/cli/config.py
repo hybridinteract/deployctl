@@ -444,6 +444,9 @@ class Config:
                 out[key] = str(value)
         out["DEPLOYCTL_PROJECT"] = str(paths.ROOT)
         out["DEPLOYCTL_ENV"] = self.env
+        # The `deployctl` the engine's hints suggest: with --project-dir when this is
+        # not the folder a bare `deployctl` finds from the repository (cli/deployment.py).
+        out["DEPLOYCTL_CLI"] = deployment.cli_prefix()
         # Scripts must never block on a prompt when driven by the CLI or panel.
         out.setdefault("ASSUME_YES", "1")
         return out

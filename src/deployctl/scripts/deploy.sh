@@ -103,7 +103,7 @@ check_local_permissions() {
                 # would work. Warn rather than block, since the next render
                 # resets it anyway and refusing to deploy fixes nothing.
                 print_warning "  .env.${DEPLOYCTL_ENV} is mode ${mode}, expected 600 — it holds every application secret"
-                print_warning "  → chmod 600 '${path}'   (or: deployctl deploy doctor --fix)"
+                print_warning "  → chmod 600 '${path}'   (or: ${DEPLOYCTL_CLI:-deployctl} deploy doctor --fix)"
                 warnings=$((warnings + 1))
             fi
         fi
@@ -119,7 +119,7 @@ check_local_permissions() {
                 print_error "  redis/redis-password.conf is mode ${mode} but is mounted into the Redis container"
                 print_error "  → Redis runs as uid 999 and cannot read it; the container exits and every"
                 print_error "    service that depends on it reports 'dependency failed to start'"
-                print_error "  → deployctl setup --env ${DEPLOYCTL_ENV} --force   (or: deployctl deploy doctor --fix)"
+                print_error "  → ${DEPLOYCTL_CLI:-deployctl} setup --env ${DEPLOYCTL_ENV} --force   (or: ${DEPLOYCTL_CLI:-deployctl} deploy doctor --fix)"
                 problems=$((problems + 1))
             fi
         fi
@@ -179,14 +179,14 @@ check_host_permissions() {
                 # artifact, and that artifact was just re-rendered correctly.
                 # Failing here would block the only thing that fixes it.
                 print_warning "  ${path} is mode ${mode} — unreadable by the container's uid"
-                print_warning "  → the next deploy re-syncs it and corrects this; to do it now: deployctl deploy doctor --fix"
+                print_warning "  → the next deploy re-syncs it and corrects this; to do it now: ${DEPLOYCTL_CLI:-deployctl} deploy doctor --fix"
                 warnings=$((warnings + 1))
                 ;;
             FILE_STATE)
                 print_error "  ${path} is mode ${mode} (owner ${owner}) but is mounted into a container"
                 print_error "  → the container's uid is not ${owner%%:*}, so it cannot read the file, and"
                 print_error "    nothing overwrites this file — it is server-side state deployctl never replaces"
-                print_error "  → deployctl deploy doctor --fix, or on the host: chmod o+r '${path}'"
+                print_error "  → ${DEPLOYCTL_CLI:-deployctl} deploy doctor --fix, or on the host: chmod o+r '${path}'"
                 problems=$((problems + 1))
                 ;;
         esac
@@ -272,7 +272,7 @@ doctor() {
                 print_success "  image ${ref} is pullable"
             else
                 print_error "  cannot resolve ${ref} from this host"
-                print_error "  → wrong tag, package still private without credentials, or no CI build yet (deployctl image tags)"
+                print_error "  → wrong tag, package still private without credentials, or no CI build yet (${DEPLOYCTL_CLI:-deployctl} image tags)"
                 image_ok=0
             fi
         done
@@ -285,7 +285,7 @@ doctor() {
         foreign="$(remote "$h" "docker ps --filter 'name=${CONTAINER_PREFIX}_' --format '{{.Label \"com.docker.compose.project\"}}' | sort -u | grep -v '^${COMPOSE_PROJECT}\$' | grep -v '^\$'" 2>/dev/null || true)"
         if [[ -n "$foreign" ]]; then
             print_warning "  containers named ${CONTAINER_PREFIX}_* belong to another compose project (${foreign})"
-            print_warning "  → stop the old stack once before the first deployctl deploy: docker compose -p ${foreign} down"
+            print_warning "  → stop the old stack once before the first ${DEPLOYCTL_CLI:-deployctl} deploy: docker compose -p ${foreign} down"
         fi
     done
 
@@ -293,7 +293,7 @@ doctor() {
     if [[ $fail -gt 0 ]]; then
         print_error "doctor failed on ${fail} check(s) — fix the above before deploying"
         [[ $DOCTOR_FIX -eq 1 ]] || print_info "  permission problems above marked '--fix' can be repaired with:"
-        [[ $DOCTOR_FIX -eq 1 ]] || print_info "    deployctl deploy doctor --env ${DEPLOYCTL_ENV} --fix"
+        [[ $DOCTOR_FIX -eq 1 ]] || print_info "    ${DEPLOYCTL_CLI:-deployctl} deploy doctor --env ${DEPLOYCTL_ENV} --fix"
         return 1
     fi
     print_success "every host is ready"
@@ -311,7 +311,7 @@ migrate_primary() {
         print_error "[migrate] failed. Read the migration's own error above; the usual causes:"
         print_error "  • \"Can't locate revision\": the database is NEWER than this image's migrations —"
         print_error "    this tag predates a migration that already ran. Going back to it is a"
-        print_error "    rollback, which does not migrate: deployctl deploy rollback --to ${IMAGE_TAG}"
+        print_error "    rollback, which does not migrate: ${DEPLOYCTL_CLI:-deployctl} deploy rollback --to ${IMAGE_TAG}"
         print_error "  • connection refused / authentication failed: the host is missing from the"
         print_error "    database's trusted sources, or POSTGRES_* credentials are wrong"
         return 1
@@ -406,7 +406,7 @@ revert_fleet() {
     [[ -n "${ROLLED// /}" ]] || return 0
     if [[ "${REVERT_SCOPE:-fleet}" != "fleet" || "${DEPLOYCTL_NO_REVERT:-}" == "1" ]]; then
         print_error "  hosts already on ${IMAGE_TAG}:${ROLLED} — the fleet is split between two releases"
-        print_error "  → all back to one release: deployctl deploy rollback --env ${DEPLOYCTL_ENV}"
+        print_error "  → all back to one release: ${DEPLOYCTL_CLI:-deployctl} deploy rollback --env ${DEPLOYCTL_ENV}"
         return 0
     fi
     print_separator
@@ -425,7 +425,7 @@ revert_fleet() {
     if [[ $all_back -eq 1 ]]; then
         print_warning "[fleet] every host is back on the release it ran before"
     else
-        print_error "[fleet] not every host could be put back — deployctl deploy status --env ${DEPLOYCTL_ENV} shows what each runs"
+        print_error "[fleet] not every host could be put back — ${DEPLOYCTL_CLI:-deployctl} deploy status --env ${DEPLOYCTL_ENV} shows what each runs"
     fi
 }
 
@@ -480,7 +480,7 @@ cmd_init() {
     print_success "initial deployment complete"
     if [[ "${TLS_LE:-false}" == "true" ]]; then
         print_warning "TLS is still the 1-day bootstrap certificate — obtain the real one now:"
-        print_warning "  deployctl ssl setup --env ${DEPLOYCTL_ENV}"
+        print_warning "  ${DEPLOYCTL_CLI:-deployctl} ssl setup --env ${DEPLOYCTL_ENV}"
     fi
 }
 

@@ -35,24 +35,47 @@ def separator() -> None:
     print(f"{BLUE}────────────────────────────────────────{NC}")
 
 
+#: A `deployctl <command>` a message tells the operator to run next. Not the word in
+#: prose ("deployctl did not write it") or a version ("deployctl 0.16.0").
+_SUGGESTED = re.compile(
+    r"\bdeployctl (?=(?:access|adopt|backup|ci|config|deploy|envs|image|init|migrate-config|projects|selftest"
+    r"|server|setup|ssl|validate|webui)\b)"
+)
+
+
+def scoped(text: str) -> str:
+    """A suggested command, made to act on THIS deploy folder when typed from the repository.
+
+    From the repository's root a bare `deployctl` finds its deploy/. Run in another
+    of its deploy folders (deploy-sentinel/), every `deployctl <command>` a message
+    suggests gets `--project-dir deploy-sentinel`, so following a hint can never
+    land on the other deployment. Unchanged wherever a bare `deployctl` already
+    means this folder — every project with one deploy folder.
+    """
+    from . import deployment  # here: ui is imported by everything, deployment by little
+
+    prefix = deployment.cli_prefix()
+    return text if prefix == "deployctl" else _SUGGESTED.sub(prefix + " ", text)
+
+
 def info(text: str) -> None:
-    print(f"{BLUE}[INFO]{NC} {text}")
+    print(f"{BLUE}[INFO]{NC} {scoped(text)}")
 
 
 def ok(text: str) -> None:
-    print(f"{GREEN}[SUCCESS]{NC} {text}")
+    print(f"{GREEN}[SUCCESS]{NC} {scoped(text)}")
 
 
 def warn(text: str) -> None:
-    print(f"{YELLOW}[WARNING]{NC} {text}")
+    print(f"{YELLOW}[WARNING]{NC} {scoped(text)}")
 
 
 def error(text: str) -> None:
-    print(f"{RED}[ERROR]{NC} {text}", file=sys.stderr)
+    print(f"{RED}[ERROR]{NC} {scoped(text)}", file=sys.stderr)
 
 
 def hint(text: str) -> None:
-    print(f"  {DIM}→ {text}{NC}")
+    print(f"  {DIM}→ {scoped(text)}{NC}")
 
 
 def problem(level: str, message: str, detail: str = "") -> None:
@@ -62,9 +85,9 @@ def problem(level: str, message: str, detail: str = "") -> None:
     splitting them across two streams scrambles the order when piped.
     """
     marker = f"{RED}[ERROR]{NC}" if level == "error" else f"{YELLOW}[WARNING]{NC}"
-    print(f"{marker} {message}")
+    print(f"{marker} {scoped(message)}")
     if detail:
-        print(f"  {DIM}→ {detail}{NC}")
+        print(f"  {DIM}→ {scoped(detail)}{NC}")
 
 
 def debug(text: str) -> None:
