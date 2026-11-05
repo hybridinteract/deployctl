@@ -148,6 +148,61 @@ dispatches from `DEPLOY_BRANCH` (prod), and `deploy.yml` still refuses runs from
 branch. The panel's *Configure → Build branch* is the same setting; leave it empty when one
 branch does both.
 
+### Several deployments in one repository
+
+One application can run in several places, for different clients or regions, each on its own
+servers. It is one repository and one image, with one deploy folder per deployment:
+
+```
+deploy/            the repository's own: deploy.yml, release.yml, DEPLOYCTL_CONFIG, …   ← prod
+deploy-sentinel/   DEPLOYMENT=sentinel: deploy-sentinel.yml, release-sentinel.yml,
+                   DEPLOYCTL_CONFIG_SENTINEL, …                                         ← prod-sentinel
+
+push to main            ci.yml + build-image.yml ──► <short-sha>        (built once, deploys nothing)
+merge main → prod       release.yml          ──► deploy.yml           ──► deploy/'s servers
+merge main → prod-sentinel  release-sentinel.yml ──► deploy-sentinel.yml ──► deploy-sentinel/'s servers
+```
+
+Create one with `deployctl init --mode single --deployment sentinel`. It writes
+`deploy-sentinel/` with `DEPLOYMENT=sentinel`, `DEPLOY_BRANCH=prod-sentinel`, and the
+repository's build branch as `BUILD_BRANCH`. Copy `project/` from `deploy/`, since it is the
+same app, then change what belongs to this deployment: `CORS_ORIGINS`, the cookie domain, and
+the origins in `nginx.extra.conf`. From then on, name its folder in every command with
+`--project-dir deploy-sentinel`, or `cd deploy-sentinel` first.
+
+The name keeps every deployment away from the others:
+
+| | `deploy/` (no name) | `DEPLOYMENT=sentinel` |
+|---|---|---|
+| Workflows `ci init` writes | `build-image.yml`, `deploy.yml`, `release.yml`, `ci.yml` once | only `deploy-sentinel.yml`, `release-sentinel.yml` |
+| Config bundle | `DEPLOYCTL_CONFIG` + `_DIGEST` | `DEPLOYCTL_CONFIG_SENTINEL` + `DEPLOYCTL_CONFIG_DIGEST_SENTINEL` |
+| CI key, host keys | `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` | `DEPLOY_SSH_KEY_SENTINEL`, `DEPLOY_KNOWN_HOSTS_SENTINEL` |
+| Deploy on merge, URL | `AUTO_DEPLOY`, `APP_URL` | `AUTO_DEPLOY_SENTINEL`, `APP_URL_SENTINEL` |
+| GitHub environment, deploy lock | `production` | `sentinel` |
+| Control panel | its own port | its own port |
+
+So on GitHub Free, where a private repository has one set of secrets for every branch,
+`ci sync-config`, `setup-key`, `pin-hosts` and `auto-deploy` from `deploy-sentinel/` only
+ever write the `_SENTINEL` names, and `ci deploy` only runs `deploy-sentinel.yml`. A bundle
+records the deployment it was made for, and the other deployment's workflow refuses it.
+`deploy/` keeps exactly the names, workflows and bundle digest it had before deployments had
+names: nothing about it changes, and a `deploy.yml` from an older version keeps working.
+
+Guards:
+- **A second folder with no `DEPLOYMENT`** would resolve to `deploy/`'s names, so its `ci`
+  commands refuse to run. `validate` and `ci doctor` say so.
+- **Two folders with the same `DEPLOYMENT` or `DEPLOY_BRANCH`** is a `validate` error, since
+  one merge would release both.
+- **No build branch:** a named deployment always releases the image another branch builds,
+  so it needs `BUILD_BRANCH`. `ci init` refuses without one.
+- **Which folder:** every `ci` command that changes GitHub or the hosts first prints the
+  deployment and folder it acts on. In a repository with several folders, `deploy` commands
+  do the same.
+
+`deploy-sentinel.yml` must also reach the repository's default branch before `ci deploy` can
+start it. GitHub only offers *Run workflow* for files on the default branch. A merge into
+`prod-sentinel` runs `release-sentinel.yml` from that branch either way.
+
 ---
 
 ## Day to day

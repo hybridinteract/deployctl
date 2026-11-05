@@ -48,6 +48,18 @@ required = true
 placeholder = "ops@example.com"
 help = "Let's Encrypt sends expiry warnings here."
 
+[[section.field]]
+key = "CERTBOT_MEM_LIMIT"
+label = "certbot memory limit"
+target = "env"
+placeholder = "64m"
+
+[[section.field]]
+key = "CERTBOT_CPUS"
+label = "certbot CPU limit"
+target = "env"
+placeholder = "0.1"
+
 [[section]]
 id = "postgres"
 title = "PostgreSQL"
@@ -83,6 +95,13 @@ placeholder = "db-….ondigitalocean.com"
 help = "Leave empty in container mode."
 
 [[section.field]]
+key = "POSTGRES_PORT"
+label = "Port (external mode only)"
+target = "env"
+placeholder = "5432"
+help = "DigitalOcean Managed Postgres listens on 25060. Container mode always uses 5432."
+
+[[section.field]]
 key = "POSTGRES_PASSWORD"
 label = "Password (external mode only)"
 target = "env"
@@ -97,6 +116,18 @@ target = "env"
 type = "select"
 options = ["disable", "require", "verify-ca", "verify-full"]
 
+[[section.field]]
+key = "POSTGRES_MEM_LIMIT"
+label = "Memory limit (container mode only)"
+target = "env"
+placeholder = "512m"
+
+[[section.field]]
+key = "POSTGRES_CPUS"
+label = "CPU limit (container mode only)"
+target = "env"
+placeholder = "1.0"
+
 [[section]]
 id = "redis"
 title = "Redis"
@@ -109,3 +140,16 @@ label = "Mode"
 target = "env"
 type = "select"
 options = ["container", "external"]
+
+[[section.field]]
+key = "REDIS_MEM_LIMIT"
+label = "Memory limit (container mode only)"
+target = "env"
+placeholder = "256m"
+help = "Redis's maxmemory is set to 75% of this, so it evicts before Docker kills it."
+
+[[section.field]]
+key = "REDIS_CPUS"
+label = "CPU limit (container mode only)"
+target = "env"
+placeholder = "0.5"

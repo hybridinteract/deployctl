@@ -15,7 +15,7 @@
     </select>
   </label>
   <div class="project" title="{{ summary.hosts|join(' ') }}">
-    {{ summary.project }} <span class="dim">· {{ summary.mode }} · {{ summary.hosts|length }} host(s) · {{ summary.domain }}</span>
+    {{ summary.project }}{% if summary.deployment %} <span class="pill todo" title="DEPLOYMENT={{ summary.deployment }} — one of several deploy folders of this repository; its own workflows and GitHub secrets">{{ summary.deployment }} · {{ summary.folder }}/</span>{% endif %} <span class="dim">· {{ summary.mode }} · {{ summary.hosts|length }} host(s) · {{ summary.domain }}</span>
   </div>
   <div class="livebar" data-live="bar" aria-live="polite"><span class="hint">reading the hosts and GitHub…</span></div>
   <div class="topbar-right">

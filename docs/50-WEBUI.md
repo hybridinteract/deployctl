@@ -7,7 +7,7 @@ deploying or rolling back a tag, putting a config change live — happens in **O
 ## Start it
 
 ```bash
-uv tool install git+https://github.com/hybridinteract/deployctl@v0.15.0   # once per machine
+uv tool install git+https://github.com/hybridinteract/deployctl@v0.16.0   # once per machine
 deployctl webui               # this project's panel — or, outside a project, the home panel
 ```
 
@@ -36,6 +36,19 @@ shows them all.
 
 A panel only ever acts on the project it was started for. Nothing in it can deploy another
 one.
+
+A project is one deploy **folder**, not one repository. A repository with several
+deployments, such as `deploy/` and `deploy-sentinel/` (*Several deployments in one
+repository* in 35-CONTINUOUS-DEPLOYMENT), has a panel for each, on its own port. Open one
+with `deployctl --project-dir deploy-sentinel webui`, or **Add project** with the folder's
+path. Its top bar shows the deployment's name and folder. An existing project keeps its name
+and port when a second folder is added beside it.
+
+**Configure → Server size** takes the server's memory and vCPUs. The problems box then shows
+the server budget: every container's memory and CPU limit, added up against the server.
+`deployctl config budget` prints the same table. The limits of the smaller containers (nginx,
+certbot, Celery Beat, Redis's CPU) are fields too, under *Other services* and in the TLS and
+Redis sections.
 
 - **The switcher** — **Projects ▾**, top right — lists every project:
   - whether its panel is running;

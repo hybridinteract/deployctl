@@ -30,7 +30,7 @@ import zlib
 from typing import Any
 from urllib.parse import quote
 
-from . import paths
+from . import deployment, paths
 from .envfile import read_env_file
 
 BOOL_TRUE = {"true", "1", "yes", "on"}
@@ -93,6 +93,24 @@ DEFAULTS = {
     "POSTGRES_MEM_LIMIT": "512m",
     "POSTGRES_CPUS": "1.0",
     "REDIS_MEM_LIMIT": "256m",
+    "REDIS_CPUS": "0.5",
+    # The small services. Each default is the value the template used to fix, so a
+    # project that sets none of them renders exactly as before.
+    "NGINX_MEM_LIMIT": "128m",
+    "NGINX_CPUS": "0.25",
+    "CERTBOT_MEM_LIMIT": "64m",
+    "CERTBOT_CPUS": "0.1",
+    "BEAT_MEM_LIMIT": "256m",
+    "BEAT_CPUS": "0.2",
+    # The size of one host, for the budget check (Config.budget). Empty: no check.
+    # SYSTEM_RESERVE_MEMORY is what the OS, Docker and sshd keep for themselves.
+    "SERVER_MEMORY": "",
+    "SERVER_CPUS": "",
+    "SYSTEM_RESERVE_MEMORY": "700m",
+    # Who gunicorn's default command trusts for X-Forwarded-For. '*' (any peer) is
+    # the historical value; a project behind its own nginx narrows it to the compose
+    # network, e.g. 127.0.0.1,172.22.0.0/16, without replacing the whole command.
+    "FORWARDED_ALLOW_IPS": "*",
     # How long `docker stop` (every deploy's recreate) waits before SIGKILL.
     # Without it Docker's own default applies — 10s, and 3s on some Desktop
     # builds — so gunicorn's 30s graceful drain never happened. Workers get
@@ -112,6 +130,10 @@ DEFAULTS = {
     # GitHub environment named like this one — Team/Pro for a private repository)
     # or `repository` (every plan). `deployctl ci connect` detects and writes it.
     "CI_SCOPE": "",
+    # Set (config/common.env) on every deploy folder of a repository but its
+    # deploy/: its own workflow files, GitHub secrets and deploy lock
+    # (cli/deployment.py). Empty: the repository's one deployment, as always.
+    "DEPLOYMENT": "",
     # The branch whose pushes build and, with AUTO_DEPLOY on, deploy.
     "DEPLOY_BRANCH": "main",
     # Set when images are built on another branch than the one that deploys: pushes
@@ -232,6 +254,38 @@ def memory_mib(limit: str) -> float | None:
     return {"k": value / 1024, "m": value, "g": value * 1024}[unit]
 
 
+def cpu_count(value: str) -> float | None:
+    """A Docker ``cpus`` value (``0.5``, ``2``) as a number, or None if unreadable."""
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return None
+    return number if number > 0 else None
+
+
+#: Every container a host can run, and the keys that size it: (service, memory, cpus).
+SIZED_SERVICES = (
+    ("nginx", "NGINX_MEM_LIMIT", "NGINX_CPUS"),
+    ("certbot", "CERTBOT_MEM_LIMIT", "CERTBOT_CPUS"),
+    ("postgres", "POSTGRES_MEM_LIMIT", "POSTGRES_CPUS"),
+    ("redis", "REDIS_MEM_LIMIT", "REDIS_CPUS"),
+    ("api", "API_MEM_LIMIT", "API_CPUS"),
+    ("celery_worker", "WORKER_MEM_LIMIT", "WORKER_CPUS"),
+    ("celery_beat", "BEAT_MEM_LIMIT", "BEAT_CPUS"),
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class BudgetLine:
+    """One container on one host: its limits as configured, and read as numbers."""
+
+    service: str
+    memory: str
+    memory_mib: float | None
+    cpus: str
+    cpus_value: float | None
+
+
 def _fraction_of_limit(limit: str, fraction: float) -> str:
     """Take a fraction of a Docker memory limit (``256m``, ``1g``) as a Redis size.
 
@@ -303,6 +357,62 @@ class Config:
     def ordered_hosts(self) -> list[str]:
         """Primary first, then the rest — the order a rolling deploy uses."""
         return [self.primary_host] + [h for h in self.hosts if h != self.primary_host]
+
+    def budget(self) -> dict[str, list[BudgetLine]]:
+        """Per role, every container its host runs and that container's limits.
+
+        Gated on the same flags as the compose template, so a budget never counts
+        a service the host does not start: Beat is on the primary only, and the
+        containerized Postgres, Redis and certbot only where they are configured.
+        """
+        raw, derived = self.raw, self.derived
+        runs = {
+            "nginx": True,
+            "certbot": derived["WITH_CERTBOT"],
+            "postgres": derived["WITH_POSTGRES"],
+            "redis": derived["WITH_REDIS"],
+            "api": True,
+            "celery_worker": bool(raw["CELERY_APP"] or raw["WORKER_COMMAND"]),
+            "celery_beat": derived["WITH_BEAT"],
+        }
+        return {
+            role: [
+                BudgetLine(service, raw[mem], memory_mib(raw[mem]), raw[cpu], cpu_count(raw[cpu]))
+                for service, mem, cpu in SIZED_SERVICES
+                if runs[service] and (service != "celery_beat" or role == "primary")
+            ]
+            for role in self.roles
+        }
+
+    def budget_report(self) -> list[dict[str, Any]]:
+        """Per role: the limits added up, against SERVER_MEMORY / SERVER_CPUS.
+
+        A total is None when one of its limits cannot be read; ``free_mib`` is None
+        without a server size. ``deployctl config budget`` and the panel show this;
+        :meth:`validate` judges it.
+        """
+        raw = self.raw
+        server_mib = memory_mib(raw["SERVER_MEMORY"]) if raw["SERVER_MEMORY"] else None
+        server_cpus = cpu_count(raw["SERVER_CPUS"]) if raw["SERVER_CPUS"] else None
+        reserve_mib = memory_mib(raw["SYSTEM_RESERVE_MEMORY"])
+        report = []
+        for role, lines in self.budget().items():
+            memory = None if any(l.memory_mib is None for l in lines) else sum(l.memory_mib for l in lines)
+            cpus = None if any(l.cpus_value is None for l in lines) else round(sum(l.cpus_value for l in lines), 3)
+            free = (server_mib - memory - reserve_mib
+                    if None not in (server_mib, memory, reserve_mib) else None)
+            report.append({
+                "role": role,
+                "lines": [dataclasses.asdict(line) for line in lines],
+                "memory_mib": memory,
+                "cpus": cpus,
+                "reserve_mib": reserve_mib,
+                "server_memory_mib": server_mib,
+                "server_cpus": server_cpus,
+                "free_mib": free,
+                "free_pct": round(100 * free / server_mib) if free is not None and server_mib else None,
+            })
+        return report
 
     def refresh_derived(self) -> None:
         """Recompute derived values after ``raw`` changed.
@@ -421,6 +531,27 @@ class Config:
             err(f"DEPLOY_BRANCH {raw['DEPLOY_BRANCH']!r} is not a branch name")
         if raw["BUILD_BRANCH"] and not re.fullmatch(r"[A-Za-z0-9._/-]+", raw["BUILD_BRANCH"]):
             err(f"BUILD_BRANCH {raw['BUILD_BRANCH']!r} is not a branch name")
+
+        # -- one deploy folder among several in this repository (cli/deployment.py)
+        name = raw["DEPLOYMENT"]
+        if name and not deployment.NAME.fullmatch(name):
+            err(f"DEPLOYMENT {name!r} must be lowercase letters, digits and hyphens, starting with a letter",
+                "it becomes part of workflow file names and GitHub secret names, e.g. sentinel")
+        if name and (not raw["BUILD_BRANCH"] or raw["BUILD_BRANCH"] == raw["DEPLOY_BRANCH"]):
+            err(
+                f"DEPLOYMENT={name} has no build branch of its own to release from",
+                "a named deployment ships the image the repository's CI builds: set BUILD_BRANCH to that branch "
+                "(e.g. main) and DEPLOY_BRANCH to this deployment's release branch (e.g. prod-" + name + ")",
+            )
+        for clash in deployment.clashes(self):
+            err(clash, "set DEPLOYMENT and DEPLOY_BRANCH in each folder's config/common.env")
+        owner = deployment.unnamed_conflict(self)
+        if owner is not None:
+            warn(
+                f"this folder has no DEPLOYMENT, and {deployment._rel(owner.path)} already uses the plain CI names",
+                "its `ci` commands are refused until it has a name — set DEPLOYMENT in config/common.env "
+                "(e.g. DEPLOYMENT=sentinel), or they would replace the other deployment's GitHub secrets",
+            )
         if raw["REVERT_SCOPE"] not in ("fleet", "host"):
             err(f"REVERT_SCOPE must be 'fleet' or 'host' (got {raw['REVERT_SCOPE']!r})")
         if raw["SSH_JUMP_HOST"] and not re.fullmatch(r"[A-Za-z0-9@._:\[\]-]+(,[A-Za-z0-9@._:\[\]-]+)*", raw["SSH_JUMP_HOST"]):
@@ -573,6 +704,71 @@ class Config:
                     f"the kernel kills processes to stay under the limit and the container restarts in a "
                     f"loop; lower {count_key}, or raise {limit_key} to about {needed + PROCESS_MIB}m",
                 )
+
+        # -- sizes: each running container's limits, then the host's budget
+        # Warnings, not errors: a limit this cannot read may still be one Docker
+        # takes (plain bytes), and a project that sets no server size must not find
+        # new errors here. A blank one is the dangerous case — compose renders
+        # `mem_limit:` with no value, and the container runs without any limit.
+        for line in self.budget()["primary"]:
+            mem_key, cpu_key = next((m, c) for s, m, c in SIZED_SERVICES if s == line.service)
+            if line.memory_mib is None:
+                warn(f"{mem_key}={line.memory!r} is not a memory size deployctl can read"
+                     + (" — the container would run with no memory limit" if not line.memory.strip() else ""),
+                     "write it the way Docker does, e.g. 512m or 1g; the server budget leaves it out")
+            if line.cpus_value is None:
+                warn(f"{cpu_key}={line.cpus!r} is not a CPU count deployctl can read"
+                     + (" — the container would run with no CPU limit" if not line.cpus.strip() else ""),
+                     "a positive number, e.g. 0.5 or 2; the server budget leaves it out")
+
+        sized = False
+        if raw["SERVER_MEMORY"]:
+            if memory_mib(raw["SERVER_MEMORY"]) is None:
+                err(f"SERVER_MEMORY={raw['SERVER_MEMORY']!r} is not a memory size", "e.g. 8g or 8192m")
+            else:
+                sized = True
+        if raw["SERVER_CPUS"]:
+            if cpu_count(raw["SERVER_CPUS"]) is None:
+                err(f"SERVER_CPUS={raw['SERVER_CPUS']!r} is not a CPU count", "the server's vCPUs, e.g. 4")
+            else:
+                sized = True
+        if sized and memory_mib(raw["SYSTEM_RESERVE_MEMORY"]) is None:
+            err(f"SYSTEM_RESERVE_MEMORY={raw['SYSTEM_RESERVE_MEMORY']!r} is not a memory size", "e.g. 700m")
+            sized = False
+        if sized:
+            for row in self.budget_report():
+                where = "the server" if len(self.roles) == 1 else f"each {row['role']} host"
+                server_mib, memory, reserve = row["server_memory_mib"], row["memory_mib"], row["reserve_mib"]
+                if row["free_mib"] is not None and row["free_mib"] < 0:
+                    err(
+                        f"the memory limits on {where} add up to {memory:.0f} MiB; with "
+                        f"SYSTEM_RESERVE_MEMORY ({reserve:.0f} MiB) that is {memory + reserve:.0f} MiB, more than "
+                        f"SERVER_MEMORY={raw['SERVER_MEMORY']} ({server_mib:.0f} MiB)",
+                        "if every container reached its limit the kernel would start killing processes; lower a "
+                        "limit, or raise SERVER_MEMORY if the server is bigger — deployctl config budget lists them",
+                    )
+                elif row["free_mib"] is not None and row["free_mib"] < 0.15 * server_mib:
+                    warn(
+                        f"{where} keeps only {row['free_mib']:.0f} MiB ({row['free_pct']}%) free if every "
+                        "container reaches its limit",
+                        "page cache, image pulls, the migration and backup containers all run in that space; "
+                        "15% or more is safer — deployctl config budget lists the limits",
+                    )
+                if row["server_cpus"] is not None and row["cpus"] is not None and row["cpus"] > row["server_cpus"]:
+                    warn(
+                        f"the CPU limits on {where} add up to {row['cpus']:g}, more than "
+                        f"SERVER_CPUS={raw['SERVER_CPUS']}",
+                        "limits are ceilings, so this runs; under full load the containers share the cores and "
+                        "the api can slow down — lower API_CPUS or WORKER_CPUS to keep it inside",
+                    )
+
+        # Pasted inside single quotes in the default gunicorn command.
+        if not re.fullmatch(r"\*|[0-9A-Fa-f.:/]+(,[0-9A-Fa-f.:/]+)*", raw["FORWARDED_ALLOW_IPS"]):
+            err(
+                f"FORWARDED_ALLOW_IPS={raw['FORWARDED_ALLOW_IPS']!r} is not '*' or a comma-separated list of "
+                "addresses and CIDRs",
+                "e.g. 127.0.0.1,172.22.0.0/16 — no spaces or quotes",
+            )
 
         return problems
 

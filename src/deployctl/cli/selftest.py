@@ -126,6 +126,52 @@ REDIS_MODE=container
         contains=(("env", "POSTGRES_HOST=db.provider.test"), ("env", "sslmode=require")),
     ),
     Case(
+        # A further deployment of a repository (DEPLOYMENT), sized for its server:
+        # every container's limits set, and the budget against 4 vCPU / 8 GB fits.
+        name="single · managed postgres, containerized redis · named deployment sized for 4 vCPU / 8 GB",
+        env="production",
+        settings=_BASE_HOST_CONFIG
+        + """\
+MODE=single
+DEPLOYMENT=sentinel
+DEPLOY_BRANCH=prod-sentinel
+BUILD_BRANCH=main
+HOSTS="203.0.113.20"
+ACME_EMAIL=ops@example.test
+POSTGRES_MODE=external
+POSTGRES_HOST=db.provider.test
+POSTGRES_PORT=25060
+POSTGRES_DB=defaultdb
+POSTGRES_USER=doadmin
+POSTGRES_PASSWORD=long-enough-password
+DB_SSL_MODE=require
+REDIS_MODE=container
+FORWARDED_ALLOW_IPS=127.0.0.1,172.22.0.0/16
+API_WORKERS=3
+API_MEM_LIMIT=2048m
+API_CPUS=1.9
+CELERY_WORKERS=3
+WORKER_MEM_LIMIT=1536m
+WORKER_CPUS=1.0
+REDIS_MEM_LIMIT=512m
+REDIS_CPUS=0.5
+SERVER_MEMORY=8g
+SERVER_CPUS=4
+""",
+        services_present=("nginx", "certbot", "redis", "api", "celery_worker", "celery_beat"),
+        services_absent=("postgres",),
+        contains=(
+            ("compose", "--workers 3"),
+            ("compose", "--concurrency=3"),
+            ("compose", "--forwarded-allow-ips='127.0.0.1,172.22.0.0/16'"),
+            ("compose", "mem_limit: 2048m"),
+            ("compose", "cpus: 1.9"),
+            ("compose", "mem_limit: 1536m"),
+            ("redis", "maxmemory 384mb"),
+            ("env", "sslmode=require"),
+        ),
+    ),
+    Case(
         name="single · no TLS (behind someone else's proxy)",
         env="staging",
         settings=_BASE_HOST_CONFIG

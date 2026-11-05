@@ -36,11 +36,18 @@ Two options go before the command, and apply to all of them:
 
 ## Setup
 
-### `deployctl init --mode single|cluster [--env NAME] [--set KEY=VALUE]…`
+### `deployctl init --mode single|cluster [--env NAME] [--set KEY=VALUE]… [--deployment NAME]`
 **Touches: local.** Scaffolds `config/` and `project/` for a new environment. `--mode`
 picks the deployment shape; `--env` names the environment (default `production`). Run it
 again with a different `--env` to add another. Does not overwrite an existing config. In a
 git repository it also puts the project on this machine's list (`projects list`).
+
+`--deployment NAME` adds one more deployment to a repository that already has its
+`deploy/`: the stubs go in `deploy-NAME/` beside it (or the folder `--project-dir` names),
+with `DEPLOYMENT=NAME`, the release branch `prod-NAME` and the repository's build branch
+in its `common.env`. It gets its own panel and port, and its own workflows and GitHub
+secrets — see *Several deployments in one repository* in 35-CONTINUOUS-DEPLOYMENT.
+`deploy/` is never touched.
 
 `--set KEY=VALUE` (repeatable) fills a value in as the stubs are created — how the control
 panel's New project form works. The keys: `PROJECT_NAME`, `BASE_DOMAIN`, `IMAGE_REPO`
@@ -150,6 +157,20 @@ Credentials are masked two ways: by key name (`*_PASSWORD`, `*_TOKEN`, `*_SECRET
 and by value, so the passwords embedded in derived URLs — `DATABASE_URL`, `REDIS_URL`,
 `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` — are scrubbed too. `--show-secrets` prints
 everything in full; `--key K` prints one value and nothing else, for scripting.
+
+### `deployctl config budget --env E [--json]`
+**Touches: local.** Lists every container a host runs with its memory and CPU limits, adds
+them up per host, and sets them against the server's size: `SERVER_MEMORY` and
+`SERVER_CPUS` in `config/<env>.env`, or Configure → Server size. `SYSTEM_RESERVE_MEMORY`
+(default `700m`) is what the OS, Docker and sshd keep outside the containers. Without a
+server size it only adds the limits up.
+
+`validate` judges the same numbers: limits plus the reserve above `SERVER_MEMORY` is an
+error, less than 15% left a warning, and CPU limits above `SERVER_CPUS` a warning only
+(limits are ceilings, and containers share cores). The keys for each container are
+`API_*`, `WORKER_*` (`*_MEM_LIMIT`, `*_CPUS`), `REDIS_*`, `POSTGRES_*`, `NGINX_*`,
+`CERTBOT_*` and `BEAT_*`. Their defaults are the values earlier versions fixed, so a
+project that sets none renders as before.
 
 ### `deployctl config export [--env E]… [--output PATH] [--generate-passphrase] [--json]`
 **Touches: local.** Writes this project's configuration to one encrypted file — for a
@@ -262,12 +283,17 @@ Run it after **every** config change made on this machine. See
 workflow uses, by digest; `--repo-level` looks where `sync-config --repo-level` stored it.
 Exit codes: `0` the same · `1` different, or never uploaded · `2` cannot check.
 
-### `deployctl ci unpack --env E [--force]`
+### `deployctl ci unpack --env E [--deployment NAME] [--force]`
 **Touches: local.** For the deploy workflow: writes `config/` from the `DEPLOYCTL_CONFIG`
 and `DEPLOYCTL_CONFIG_DIGEST` environment variables, refusing a bundle that does not match
 its digest or holds files of another environment. Under GitHub Actions it first registers
 every credential in the bundle with `::add-mask::`. `--env` is required, not inferred.
 Existing files with different contents are only replaced with `--force`.
+
+`--deployment` is given by a named deployment's own workflow (`DEPLOYMENT`, see *Several
+deployments in one repository* in 35-CONTINUOUS-DEPLOYMENT): that workflow maps its own
+secret, `DEPLOYCTL_CONFIG_<NAME>`, onto the same two variables, and a bundle made for
+another deployment of the repository is refused.
 
 
 ### `deployctl ci doctor --env E [--json] [--repo-level]`

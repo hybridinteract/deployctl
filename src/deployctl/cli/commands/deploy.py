@@ -7,7 +7,7 @@ import subprocess
 
 import typer
 
-from .. import access, locks, render, secrets, tags, ui
+from .. import access, deployment, locks, render, secrets, tags, ui
 from ..config import Config
 from ..context import env_option, exclusive, load_config, resolve_env
 from ..runner import run
@@ -38,6 +38,11 @@ _allow_secret_change_option = typer.Option(
 
 def _resolve(cfg: Config, tag: str | None) -> str:
     """Decide the tag (cli/tags.py), say where it came from, or stop."""
+    if len(deployment.folders()) > 1:
+        # Several deploy folders in this repository: say which one this acts on, since
+        # from the repository's root a bare `deployctl` means its deploy/.
+        ui.info(f"deploy folder {deployment.folder()}/  "
+                f"({'deployment ' + cfg.raw['DEPLOYMENT'] if cfg.raw.get('DEPLOYMENT') else 'the repository’s own'})")
     try:
         chosen, source = tags.resolve(cfg, tag, from_hosts=True)
     except tags.NoTag as exc:

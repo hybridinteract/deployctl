@@ -17,4 +17,29 @@
   {% else %}
   {{ pill('ok', 'No problems in the saved configuration') }}
   {% endif %}
+  {#- The server budget (deployctl config budget), once Server size is filled in. -#}
+  {% for row in summary.budget if row.server_memory_mib is not none %}
+  <table class="budget">
+    <caption class="hint">Server budget{% if summary.budget|length > 1 %} — each {{ row.role }} host{% endif %}:
+      limits are ceilings, not reservations</caption>
+    <thead><tr><th>service</th><th>memory</th><th>cpus</th></tr></thead>
+    <tbody>
+      {% for line in row.lines %}
+      <tr><td>{{ line.service }}</td><td class="mono">{{ line.memory or '(none)' }}</td>
+        <td class="mono">{{ line.cpus or '(none)' }}</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><td>limits</td><td class="mono">{{ '?' if row.memory_mib is none else '%.0f MiB'|format(row.memory_mib) }}</td>
+        <td class="mono">{{ '?' if row.cpus is none else row.cpus }}</td></tr>
+      <tr><td>system reserve</td><td class="mono">{{ '?' if row.reserve_mib is none else '%.0f MiB'|format(row.reserve_mib) }}</td><td></td></tr>
+      <tr><td>server</td><td class="mono">{{ '%.0f MiB'|format(row.server_memory_mib) }}</td>
+        <td class="mono">{{ '' if row.server_cpus is none else row.server_cpus }}</td></tr>
+      {% if row.free_mib is not none %}
+      <tr class="{{ 'err' if row.free_mib < 0 else ('warn' if row.free_pct < 15 else '') }}"><td>free</td>
+        <td class="mono">{{ '%.0f MiB'|format(row.free_mib) }} ({{ row.free_pct }}%)</td><td></td></tr>
+      {% endif %}
+    </tfoot>
+  </table>
+  {% endfor %}
 </div>
